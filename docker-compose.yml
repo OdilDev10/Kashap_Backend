@@ -1,0 +1,49 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: prestamos-postgres
+    environment:
+      POSTGRES_USER: prestamos_user
+      POSTGRES_PASSWORD: prestamos_pass
+      POSTGRES_DB: prestamos_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prestamos_user -d prestamos_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - prestamos-net
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: prestamos-backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+      - uploads_data:/app/uploads
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://prestamos_user:prestamos_pass@postgres:5432/prestamos_db
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - prestamos-net
+
+volumes:
+  postgres_data:
+  uploads_data:
+
+networks:
+  prestamos-net:
+    driver: bridge

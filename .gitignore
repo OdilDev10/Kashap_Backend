@@ -1,0 +1,98 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+.venv
+venv
+
+# IDE & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+db.sqlite3
+migrations/versions/*.py  # Auto-generated alembic migrations (regenerate with alembic)
+
+# Logging
+*.log
+logs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# File Storage
+uploads/
+temp/
+processing/
+*.tmp
+
+# OS
+*.bak
+*.backup
+*~
+.DS_Store
+Thumbs.db
+
+# Type Checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Alembic
+alembic/versions/*.py  # Keep only env.py and script.py.mako
+
+# Lock files (optional - uncomment if using uv with lock)
+# uv.lock
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Misc
+.cache/
+*.orig
