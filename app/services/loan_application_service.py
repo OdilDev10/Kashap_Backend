@@ -4,11 +4,14 @@ from uuid import uuid4
 from datetime import datetime, timezone
 from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.repositories.loan_application_repo import LoanApplicationRepository
 from app.repositories.customer_repo import CustomerRepository
 from app.repositories.lender_repo import LenderRepository
 from app.models.loan_application import LoanApplication, LoanApplicationStatus, LoanFrequency
+from app.models.customer_lender_link import CustomerLenderLink
+from app.core.enums import LinkStatus
 from app.core.exceptions import ValidationException, NotFoundException, ForbiddenException
 
 
@@ -34,7 +37,14 @@ class LoanApplicationService:
         """Create new loan application from customer."""
         # Validate customer exists and is linked to lender
         customer = await self.customer_repo.get_or_404(customer_id)
-        if customer.lender_id != lender_id:
+        link_result = await self.session.execute(
+            select(CustomerLenderLink).where(
+                CustomerLenderLink.customer_id == customer.id,
+                CustomerLenderLink.lender_id == lender_id,
+                CustomerLenderLink.status == LinkStatus.LINKED,
+            )
+        )
+        if link_result.scalar_one_or_none() is None:
             raise ForbiddenException("Customer not linked to this lender")
 
         # Validate customer status

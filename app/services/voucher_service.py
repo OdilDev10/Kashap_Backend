@@ -40,7 +40,7 @@ class VoucherService:
         """Upload voucher image and dispatch OCR processing."""
         # Validate payment exists and user can upload
         payment = await self.payment_repo.get_or_404(payment_id)
-        if payment.lender_id != lender_id:
+        if str(payment.lender_id) != str(lender_id):
             raise ForbiddenException("Not authorized for this payment")
 
         # Validate file
@@ -60,7 +60,15 @@ class VoucherService:
         # Check for duplicates
         existing = await self.voucher_repo.get_by_image_hash(image_hash)
         if existing:
-            raise ValidationException("This voucher image has already been uploaded")
+            if str(existing.payment_id) == str(payment_id):
+                return {
+                    "voucher_id": str(existing.id),
+                    "payment_id": str(payment_id),
+                    "status": existing.status.value if hasattr(existing.status, "value") else str(existing.status),
+                    "message": "Voucher already exists for this payment",
+                    "idempotent": True,
+                }
+            raise ValidationException("This voucher image has already been uploaded for another payment")
 
         # Store file
         file_url = await storage_service.upload(
@@ -90,6 +98,7 @@ class VoucherService:
             "payment_id": str(payment_id),
             "status": voucher.status.value,
             "message": "Voucher uploaded, processing started",
+            "idempotent": False,
         }
 
     async def _process_voucher_ocr(self, voucher_id: str, file_url: str) -> None:
@@ -98,8 +107,12 @@ class VoucherService:
             # Get fresh session for background task
             from app.db.session import AsyncSessionLocal
             async with AsyncSessionLocal() as session:
-                voucher = await self.voucher_repo.get_or_404(voucher_id)
-                payment = await self.payment_repo.get_or_404(voucher.payment_id)
+                voucher_repo = VoucherRepository(session)
+                payment_repo = PaymentRepository(session)
+                ocr_repo = OcrResultRepository(session)
+
+                voucher = await voucher_repo.get_or_404(voucher_id)
+                payment = await payment_repo.get_or_404(voucher.payment_id)
 
                 # Download and process image
                 file_content = await storage_service.download(file_url)
@@ -108,7 +121,7 @@ class VoucherService:
                 result = await self.ocr_service.extract_from_image(file_content)
 
                 # Save OCR result
-                ocr_result = await self.ocr_repo.create({
+                ocr_result = await ocr_repo.create({
                     "voucher_id": voucher_id,
                     "extracted_text": result.get("extracted_text"),
                     "detected_amount": result.get("detected_amount"),
@@ -124,7 +137,7 @@ class VoucherService:
 
                 # Update voucher status
                 voucher.status = VoucherStatus.PROCESSED
-                await self.voucher_repo.update(voucher, {"status": VoucherStatus.PROCESSED})
+                await voucher_repo.update(voucher, {"status": VoucherStatus.PROCESSED})
 
                 # Try to match with installment
                 await self._match_payment_to_installment(
@@ -139,12 +152,14 @@ class VoucherService:
             # Log error and mark voucher as failed
             from app.db.session import AsyncSessionLocal
             async with AsyncSessionLocal() as session:
-                voucher = await self.voucher_repo.get_or_404(voucher_id)
+                voucher_repo = VoucherRepository(session)
+                ocr_repo = OcrResultRepository(session)
+                voucher = await voucher_repo.get_or_404(voucher_id)
                 voucher.status = VoucherStatus.FAILED
-                await self.voucher_repo.update(voucher, {"status": VoucherStatus.FAILED})
+                await voucher_repo.update(voucher, {"status": VoucherStatus.FAILED})
 
                 # Create failed OCR result
-                await self.ocr_repo.create({
+                await ocr_repo.create({
                     "voucher_id": voucher_id,
                     "status": OcrStatus.FAILED,
                     "validation_summary": f"Error: {str(e)}",
@@ -161,7 +176,9 @@ class VoucherService:
         ocr_result: OcrResult,
     ) -> None:
         """Match detected payment amount to installment due amount."""
-        installment = await self.installment_repo.get_or_404(payment.installment_id)
+        installment_repo = InstallmentRepository(session)
+        match_repo = PaymentMatchRepository(session)
+        installment = await installment_repo.get_or_404(payment.installment_id)
 
         # Compare amounts
         amount_matches = False
@@ -178,7 +195,7 @@ class VoucherService:
         # Create match record
         match_status = "matched" if (amount_matches and date_matches) else "needs_review"
 
-        await self.match_repo.create({
+        await match_repo.create({
             "payment_id": payment.id,
             "installment_id": payment.installment_id,
             "expected_amount": installment.amount_due - installment.amount_paid,
@@ -194,7 +211,7 @@ class VoucherService:
         voucher = await self.voucher_repo.get_or_404(voucher_id)
         payment = await self.payment_repo.get_or_404(voucher.payment_id)
 
-        if payment.lender_id != lender_id:
+        if str(payment.lender_id) != str(lender_id):
             raise ForbiddenException("Not authorized to view this voucher")
 
         ocr = await self.ocr_repo.get_by_voucher(voucher_id)
@@ -229,7 +246,7 @@ class VoucherService:
         """List all vouchers for a payment."""
         payment = await self.payment_repo.get_or_404(payment_id)
 
-        if payment.lender_id != lender_id:
+        if str(payment.lender_id) != str(lender_id):
             raise ForbiddenException("Not authorized to view this payment")
 
         vouchers = await self.voucher_repo.get_by_payment(payment_id)

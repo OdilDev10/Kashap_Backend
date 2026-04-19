@@ -23,6 +23,7 @@ from app.api.v1.admin_reports import router as admin_reports_router
 from app.api.v1.admin_system import router as admin_system_router
 from app.api.v1.lender_settings import router as lender_settings_router
 from app.api.v1.client_settings import router as client_settings_router
+from app.api.v1.loan_products import router as loan_products_router
 
 
 api_router = APIRouter()
@@ -47,6 +48,7 @@ api_router.include_router(admin_reports_router)
 api_router.include_router(admin_system_router)
 api_router.include_router(lender_settings_router)
 api_router.include_router(client_settings_router)
+api_router.include_router(loan_products_router)
 
 router = api_router
 

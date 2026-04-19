@@ -8,7 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.payment_repo import PaymentRepository, VoucherRepository, OcrResultRepository, PaymentMatchRepository
 from app.repositories.loan_repo import InstallmentRepository, LoanRepository
 from app.repositories.customer_repo import CustomerRepository
-from app.models.payment import Payment, PaymentStatus, PaymentMethod, PaymentSource, Voucher, OcrResult, PaymentMatch
+from app.models.payment import (
+    Payment,
+    PaymentStatus,
+    PaymentMethod,
+    PaymentSource,
+    Voucher,
+    VoucherStatus,
+    OcrResult,
+    PaymentMatch,
+)
 from app.models.loan import Installment, InstallmentStatus
 from app.core.exceptions import ValidationException, NotFoundException, ForbiddenException
 
@@ -39,11 +48,11 @@ class PaymentService:
         """Submit payment for installment."""
         # Validate installment
         installment = await self.installment_repo.get_or_404(installment_id)
-        if installment.loan_id != loan_id:
+        if str(installment.loan_id) != str(loan_id):
             raise ValidationException("Installment not linked to loan")
 
         loan = await self.loan_repo.get_or_404(loan_id)
-        if loan.lender_id != lender_id:
+        if str(loan.lender_id) != str(lender_id):
             raise ForbiddenException("Not authorized for this loan")
 
         # Validate payment amount
@@ -82,7 +91,7 @@ class PaymentService:
         """Submit payment with vouchers for review."""
         payment = await self.payment_repo.get_or_404(payment_id)
 
-        if payment.lender_id != lender_id:
+        if str(payment.lender_id) != str(lender_id):
             raise ForbiddenException("Not authorized to review this payment")
 
         # Check if has vouchers
@@ -92,7 +101,8 @@ class PaymentService:
 
         # Check if all vouchers are processed
         for voucher in vouchers:
-            if voucher.status != "processed":
+            status_value = voucher.status.value if hasattr(voucher.status, "value") else str(voucher.status)
+            if status_value != VoucherStatus.PROCESSED.value:
                 raise ValidationException(f"Voucher {voucher.id} not yet processed")
 
         # Update status to under review
@@ -116,7 +126,7 @@ class PaymentService:
         """Approve payment and update installment."""
         payment = await self.payment_repo.get_or_404(payment_id)
 
-        if payment.lender_id != lender_id:
+        if str(payment.lender_id) != str(lender_id):
             raise ForbiddenException("Not authorized to review this payment")
 
         if payment.status != PaymentStatus.UNDER_REVIEW:
@@ -171,7 +181,7 @@ class PaymentService:
         """Reject payment."""
         payment = await self.payment_repo.get_or_404(payment_id)
 
-        if payment.lender_id != lender_id:
+        if str(payment.lender_id) != str(lender_id):
             raise ForbiddenException("Not authorized to review this payment")
 
         if payment.status != PaymentStatus.UNDER_REVIEW:
@@ -205,7 +215,7 @@ class PaymentService:
         """Get payment details with vouchers and OCR results."""
         payment = await self.payment_repo.get_or_404(payment_id)
 
-        if payment.lender_id != lender_id:
+        if str(payment.lender_id) != str(lender_id):
             raise ForbiddenException("Not authorized to view this payment")
 
         vouchers = await self.voucher_repo.get_by_payment(payment_id)

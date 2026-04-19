@@ -48,76 +48,140 @@ def initialize_ocr():
 def _extract_amount_dominican(text: str) -> Optional[Decimal]:
     """
     Extract monetary amount from Dominican voucher text.
-    Looks for patterns like: $1,000.00, RD$ 1,000.00, etc.
+    Looks for patterns like: $1,000.00, RD$ 1,000.00, US$ 250.00, etc.
     """
-    # Common Dominican currency patterns
-    patterns = [
-        r"RD?\s*\$?\s*([\d,]+\.?\d*)",  # RD$ 1,000.00 or $ 1,000.00
-        r"\$([\d,]+\.?\d*)",  # $1,000.00
-        r"([\d,]+\.\d{2})",  # 1,000.00 (numeric pattern)
+    # Normalize text to handle common OCR artifacts in numbers
+    # Sometimes OCR puts spaces in numbers: 1 000.00 -> 1000.00
+    clean_text = re.sub(r"(\d)\s+(\d{3})", r"\1\2", text)
+    
+    # Priority 1: Patterns with currency symbols and optional decimals
+    priority_patterns = [
+        r"(?:RD|US)\s*\$?\s*([\d,]+(?:\.\d{2})?)", # RD$ 1,000.00 or RD$ 1,000
+        r"\$\s*([\d,]+(?:\.\d{2})?)",             # $ 1,000.00 or $ 1,000
+    ]
+    
+    # Priority 2: Numbers with decimals but no currency symbol
+    decimal_patterns = [
+        r"(?:\s|^)([\d,]+\.\d{2})(?:\s|$)",  # 1,000.00
     ]
 
-    for pattern in patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        if matches:
-            # Take the largest amount found (likely the transaction amount)
-            amounts = []
+    # Try priority patterns first
+    for patterns in [priority_patterns, decimal_patterns]:
+        found_amounts = []
+        for pattern in patterns:
+            matches = re.findall(pattern, clean_text, re.IGNORECASE)
             for match in matches:
                 try:
-                    # Remove commas and convert to Decimal
                     clean = match.replace(",", "")
                     amount = Decimal(clean)
-                    if amount > 0:
-                        amounts.append(amount)
+                    if 0.01 <= amount <= 10000000:
+                        found_amounts.append(amount)
                 except:
                     continue
-            if amounts:
-                return max(amounts)
-
+        if found_amounts:
+            # Usually the largest amount with a currency symbol is the transaction amount
+            return max(found_amounts)
+    
     return None
 
 
 def _extract_date_dominican(text: str) -> Optional[datetime]:
     """
     Extract date from Dominican voucher text.
-    Looks for patterns like: DD/MM/YYYY, DD-MM-YYYY, etc.
+    Supports: DD/MM/YYYY, DD-MM-YYYY, DD mes YYYY, etc.
     """
-    patterns = [
-        r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})",  # DD/MM/YYYY or DD-MM-YYYY
-        r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})",  # YYYY/MM/DD
+    # Numeric patterns: DD/MM/YYYY or YYYY/MM/DD
+    numeric_patterns = [
+        r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})",
+        r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})",
     ]
 
-    for pattern in patterns:
+    for pattern in numeric_patterns:
         matches = re.findall(pattern, text)
-        if matches:
-            for match in matches:
-                try:
-                    # Try DD/MM/YYYY first
+        for match in matches:
+            try:
+                if len(match[0]) == 4: # YYYY/MM/DD
+                    year, month, day = int(match[0]), int(match[1]), int(match[2])
+                else: # DD/MM/YYYY
                     day, month, year = int(match[0]), int(match[1]), int(match[2])
-                    if day > 31 or month > 12:
-                        # Try reversing for YYYY/MM/DD format
-                        day, month, year = int(match[2]), int(match[1]), int(match[0])
-                    if 1 <= day <= 31 and 1 <= month <= 12:
-                        return datetime(year, month, day)
-                except ValueError:
-                    continue
+                
+                if 1 <= day <= 31 and 1 <= month <= 12 and 2000 <= year <= 2100:
+                    return datetime(year, month, day)
+            except ValueError:
+                continue
+
+    # Text-based months (Popular style: 2 mar 2026)
+    months_map = {
+        'ene': 1, 'feb': 2, 'mar': 3, 'abr': 4, 'may': 5, 'jun': 6,
+        'jul': 7, 'ago': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dic': 12,
+        'jan': 1, 'apr': 4, 'aug': 8, 'dec': 12 # English fallbacks
+    }
+    
+    months_pattern = "|".join(months_map.keys())
+    text_date_pattern = rf"(\d{{1,2}})\s+({months_pattern})[a-z]*\s+(\d{{4}})"
+    
+    matches = re.findall(text_date_pattern, text, re.IGNORECASE)
+    if matches:
+        for day_str, month_str, year_str in matches:
+            try:
+                day = int(day_str)
+                month = months_map[month_str.lower()[:3]]
+                year = int(year_str)
+                return datetime(year, month, day)
+            except (ValueError, KeyError):
+                continue
 
     return None
 
 
 def _extract_bank_reference(text: str) -> Optional[str]:
     """Extract bank transaction reference or authorization code."""
-    # Common Dominican bank reference patterns
+    # Common Dominican bank reference patterns including "No. Referencia" and "No. Confirmación"
+    keywords = (
+        r"ref|referencia|reference|autorizaci[óo]n|authorization|code|"
+        r"confirmaci[óo]n|aprobaci[óo]n|comprobante|n[úu]mero"
+    )
     patterns = [
-        r"(?:ref|referencia|reference|autorizaci[ó]n|authorization|code)[:\s]+([A-Z0-9]{6,20})",
-        r"#([A-Z0-9]{6,20})",  # # followed by code
+        rf"(?:{keywords})(?:\s+|[.\s]+|[:\s]+)(?:ref(?:erencia)?\s+)?((?=[A-Z0-9\-]{{6,25}}\b)(?=[A-Z0-9\-]*\d)[A-Z0-9\-]+)",
+        r"#\s*([A-Z0-9\-]{6,20})",
+        # Pattern for BHD style: M11-1773-7951-5758-5
+        r"([A-Z]\d{2}-\d{4}-\d{4}-\d{4}-\d)"
     ]
 
-    for pattern in patterns:
+    for idx, pattern in enumerate(patterns):
         matches = re.findall(pattern, text, re.IGNORECASE)
         if matches:
-            return matches[0]
+            # Clean up the reference (remove trailing dots or spaces)
+            ref = matches[0].strip().strip('.')
+            # For the broad keyword pattern require at least one digit to avoid
+            # capturing label words like "referencia" as the value.
+            needs_digit = idx == 0
+            if len(ref) >= 6 and (any(ch.isdigit() for ch in ref) or not needs_digit):
+                return ref
 
+    return None
+
+
+def _extract_bank_name(text: str) -> Optional[str]:
+    """Detect the bank name based on keywords in text."""
+    banks = {
+        "Popular": ["popular", "bpd"],
+        "BHD": ["bhd", "leon"],
+        "BDI": ["bdi"],
+        "Banreservas": ["reservas", "banreservas"],
+        "Scotiabank": ["scotia"],
+        "Progreso": ["progreso"],
+        "Santa Cruz": ["santa cruz"],
+        "Promerica": ["promerica"],
+        "Ademi": ["ademi"],
+        "JMMB": ["jmmb"],
+    }
+
+    text_lower = text.lower()
+    for bank_name, keywords in banks.items():
+        if any(keyword in text_lower for keyword in keywords):
+            return bank_name
+    
     return None
 
 
@@ -140,8 +204,8 @@ def _process_ocr_result(image_path: str) -> dict:
             for line in result:
                 if line:
                     for word_info in line:
-                        text = word_info[1]
-                        confidence = word_info[2]
+                        text = word_info[1][0] # PaddleOCR format: [text, confidence]
+                        confidence = word_info[1][1]
                         extracted_text += text + " "
                         confidence_scores.append(confidence)
 
@@ -175,6 +239,12 @@ async def process_voucher_image(image_path: str) -> dict:
         amount = _extract_amount_dominican(raw_text)
         transaction_date = _extract_date_dominican(raw_text)
         bank_reference = _extract_bank_reference(raw_text)
+        bank_name = _extract_bank_name(raw_text)
+
+        # Detect currency
+        currency = "DOP"
+        if "US$" in raw_text.upper() or "USD" in raw_text.upper():
+            currency = "USD"
 
         extraction_status = "success" if amount and transaction_date else "partial"
         if not amount and not transaction_date:
@@ -186,8 +256,10 @@ async def process_voucher_image(image_path: str) -> dict:
             "confidence": confidence,
             "extracted_data": {
                 "amount": float(amount) if amount else None,
+                "currency": currency,
                 "transaction_date": transaction_date.isoformat() if transaction_date else None,
                 "bank_reference": bank_reference,
+                "bank_name": bank_name,
             },
             "processed_at": datetime.now().isoformat(),
         }
@@ -223,14 +295,14 @@ class OCRService:
             return {
                 "extracted_text": result.get("raw_text"),
                 "detected_amount": extracted.get("amount"),
-                "detected_currency": "DOP" if extracted.get("amount") is not None else None,
+                "detected_currency": extracted.get("currency"),
                 "detected_date": extracted.get("transaction_date"),
                 "detected_reference": extracted.get("bank_reference"),
-                "detected_bank_name": None,
+                "detected_bank_name": extracted.get("bank_name"),
                 "confidence_score": result.get("confidence", 0.0),
                 "appears_to_be_receipt": bool(result.get("raw_text")),
                 "validation_summary": result.get("status"),
-                "status": result.get("status", "failed"),
+                "status": result.get("status"),
             }
         finally:
             if temp_path and os.path.exists(temp_path):
