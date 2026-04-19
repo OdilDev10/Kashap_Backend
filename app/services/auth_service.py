@@ -103,7 +103,9 @@ class AuthService:
         )
 
         # Send verification email
-        await email_service.send_verification_email(email, token)
+        await email_service.send_verification_email(
+            to_email=email, token=token, recipient_name=f"{first_name} {last_name}"
+        )
 
         return {
             "user_id": str(user.id),
@@ -253,7 +255,11 @@ class AuthService:
         )
 
         # Send reset email
-        await email_service.send_password_reset_email(email, token)
+        await email_service.send_password_reset_email(
+            to_email=email,
+            token=token,
+            recipient_name=f"{user.first_name} {user.last_name}",
+        )
 
         await self.session.commit()
 
@@ -339,7 +345,11 @@ class AuthService:
         )
 
         # Send OTP email
-        await email_service.send_otp_email(user.email, otp_code)
+        await email_service.send_otp_email(
+            to_email=user.email,
+            otp_code=otp_code,
+            recipient_name=f"{user.first_name} {user.last_name}",
+        )
 
         await self.session.commit()
 
@@ -479,7 +489,9 @@ class AuthService:
         )
 
         # Send verification email
-        await email_service.send_verification_email(email, token)
+        await email_service.send_verification_email(
+            to_email=email, token=token, recipient_name=f"{first_name} {last_name}"
+        )
 
         await self.session.commit()
 
@@ -579,7 +591,11 @@ class AuthService:
             }
         )
 
-        await email_service.send_verification_email(email, token)
+        await email_service.send_verification_email(
+            to_email=email,
+            token=token,
+            recipient_name=f"{owner_user.first_name} {owner_user.last_name}",
+        )
 
         await self.session.commit()
 

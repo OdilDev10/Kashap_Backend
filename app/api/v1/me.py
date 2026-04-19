@@ -334,12 +334,15 @@ async def list_lenders_for_customer(
     await _ensure_legacy_link(customer, session)
 
     links_result = await session.execute(
-        select(CustomerLenderLink.lender_id).where(
-            CustomerLenderLink.customer_id == customer.id,
-            CustomerLenderLink.status == LinkStatus.LINKED,
-        )
+        select(CustomerLenderLink).where(CustomerLenderLink.customer_id == customer.id)
     )
-    associated_lender_ids = {str(link_id) for link_id in links_result.scalars().all()}
+    links = links_result.scalars().all()
+    associated_lender_ids = {
+        str(link.lender_id) for link in links if link.status == LinkStatus.LINKED
+    }
+    request_status_by_lender = {
+        str(link.lender_id): link.status.value for link in links
+    }
 
     query = select(Lender).where(Lender.status == LenderStatus.ACTIVE)
     count_query = select(func.count(Lender.id)).where(
@@ -387,6 +390,7 @@ async def list_lenders_for_customer(
                     else str(lender.status)
                 ),
                 "is_associated": str(lender.id) in associated_lender_ids,
+                "request_status": request_status_by_lender.get(str(lender.id), "none"),
             }
         )
 
@@ -438,7 +442,7 @@ async def request_association(
     customer: Customer = Depends(get_current_customer),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Request (and apply) association for the current customer to a lender."""
+    """Create a pending association request for the current customer."""
     await _ensure_legacy_link(customer, session)
 
     lender_result = await session.execute(
@@ -455,35 +459,39 @@ async def request_association(
         select(CustomerLenderLink).where(
             CustomerLenderLink.customer_id == customer.id,
             CustomerLenderLink.lender_id == lender.id,
-            CustomerLenderLink.status == LinkStatus.LINKED,
         )
     )
-    if existing_link_result.scalar_one_or_none():
+    existing_link = existing_link_result.scalar_one_or_none()
+    if existing_link and existing_link.status == LinkStatus.LINKED:
         return {
             "message": "Ya estás asociado a esta financiera",
             "lender_id": str(lender.id),
             "status": "already_linked",
         }
+    if existing_link and existing_link.status == LinkStatus.PENDING:
+        return {
+            "message": "Ya tienes una solicitud pendiente con esta financiera",
+            "lender_id": str(lender.id),
+            "status": "pending",
+        }
 
-    session.add(
-        CustomerLenderLink(
-            customer_id=customer.id,
-            lender_id=lender.id,
-            status=LinkStatus.LINKED,
+    if existing_link:
+        existing_link.status = LinkStatus.PENDING
+    else:
+        session.add(
+            CustomerLenderLink(
+                customer_id=customer.id,
+                lender_id=lender.id,
+                status=LinkStatus.PENDING,
+            )
         )
-    )
 
-    # Legacy compatibility: keep a default lender on user/customer.
-    if not customer.lender_id:
-        customer.lender_id = lender.id
-    if current_user.lender_id is None:
-        current_user.lender_id = lender.id
     await session.commit()
 
     return {
-        "message": "Solicitud de asociación completada",
+        "message": "Solicitud de asociación enviada",
         "lender_id": str(lender.id),
-        "status": "linked",
+        "status": "pending",
     }
 
 

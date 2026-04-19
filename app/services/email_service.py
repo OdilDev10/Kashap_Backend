@@ -1,137 +1,170 @@
-"""Email service for sending emails."""
+"""Email service for sending emails via Resend."""
 
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-
+import logging
 from app.config import settings
+from app.services.email_templates import (
+    get_verification_email_html,
+    get_password_reset_email_html,
+    get_otp_email_html,
+    get_welcome_email_html,
+)
+
+logger = logging.getLogger("app.email")
 
 
 class EmailService:
-    """Service for sending emails."""
+    """Service for sending emails via Resend API."""
 
     def __init__(self):
-        self.smtp_server = "smtp.gmail.com"
-        self.smtp_port = 587
-        self.sender_email = settings.smtp_email
-        self.sender_password = settings.smtp_password
+        self.api_key = settings.mail_resend_api_key
+        self.from_email = settings.mail_from_email
+        self.from_name = settings.mail_from_name
+        self.support_email = settings.support_inbox_email
+        self.app_name = "OptiCredit"
+        self.app_url = settings.app_url
 
-    async def send_verification_email(self, to_email: str, token: str, app_name: str = "Kashap") -> bool:
-        """Send email verification link to user."""
-        verification_link = f"{settings.app_url}/verify-email?token={token}"
-
-        subject = "Verifica tu correo electrónico"
-        html_template = """
-        <html>
-            <body style="font-family: Arial, sans-serif;">
-                <h2>Bienvenido a {app_name}</h2>
-                <p>Gracias por registrarte. Por favor, verifica tu correo electrónico haciendo clic en el botón de abajo:</p>
-                <p><a href="{link}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Verificar Email</a></p>
-                <p>O copia este enlace en tu navegador:</p>
-                <p>{link}</p>
-                <p>Este enlace expira en 24 horas.</p>
-                <p>Si no solicitaste este email, ignóralo.</p>
-            </body>
-        </html>
-        """
-
-        return await self._send_email(
-            to_email=to_email,
-            subject=subject,
-            html_content=html_template.format(app_name=app_name, link=verification_link)
-        )
-
-    async def send_password_reset_email(self, to_email: str, token: str, app_name: str = "Kashap") -> bool:
-        """Send password reset link to user."""
-        reset_link = f"{settings.app_url}/reset-password?token={token}"
-
-        subject = "Recupera tu contraseña"
-        html_template = """
-        <html>
-            <body style="font-family: Arial, sans-serif;">
-                <h2>Recuperación de Contraseña</h2>
-                <p>Recibimos una solicitud para recuperar tu contraseña. Haz clic en el botón de abajo para crear una nueva:</p>
-                <p><a href="{link}" style="background-color: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Recuperar Contraseña</a></p>
-                <p>O copia este enlace en tu navegador:</p>
-                <p>{link}</p>
-                <p>Este enlace expira en 1 hora.</p>
-                <p>Si no solicitaste esto, ignora este email y tu contraseña permanecerá sin cambios.</p>
-            </body>
-        </html>
-        """
-
-        return await self._send_email(
-            to_email=to_email,
-            subject=subject,
-            html_content=html_template.format(link=reset_link)
-        )
-
-    async def send_otp_email(self, to_email: str, otp_code: str) -> bool:
-        """Send OTP code to user."""
-        subject = "Tu código de verificación"
-        html_template = """
-        <html>
-            <body style="font-family: Arial, sans-serif;">
-                <h2>Código de Verificación</h2>
-                <p>Tu código de verificación es:</p>
-                <h1 style="background-color: #f0f0f0; padding: 20px; text-align: center; letter-spacing: 5px;">{otp_code}</h1>
-                <p>Este código expira en 10 minutos.</p>
-                <p>Si no solicitaste este código, ignora este email.</p>
-            </body>
-        </html>
-        """
-
-        return await self._send_email(
-            to_email=to_email,
-            subject=subject,
-            html_content=html_template.format(otp_code=otp_code)
-        )
-
-    async def send_email(self, to_email: str, subject: str, body: str) -> bool:
-        """Send generic email with plain text body."""
-        # Convert plain text to HTML
-        html_content = f"""
-        <html>
-            <body style="font-family: Arial, sans-serif;">
-                <pre>{body}</pre>
-            </body>
-        </html>
-        """
-        return await self._send_email(
-            to_email=to_email,
-            subject=subject,
-            html_content=html_content
-        )
-
-    async def _send_email(self, to_email: str, subject: str, html_content: str) -> bool:
-        """Internal method to send email."""
+    async def _send_via_resend(
+        self, to_email: str, subject: str, html_content: str
+    ) -> bool:
+        """Send email via Resend API."""
         try:
-            # For development, just log
-            if settings.environment == "development":
-                print(f"[EMAIL] To: {to_email}")
-                print(f"[EMAIL] Subject: {subject}")
-                print(f"[EMAIL] Content: {html_content}\n")
-                return True
+            import resend
 
-            # For production, use SMTP
-            message = MIMEMultipart("alternative")
-            message["Subject"] = subject
-            message["From"] = self.sender_email
-            message["To"] = to_email
+            resend.api_key = self.api_key
 
-            part = MIMEText(html_content, "html")
-            message.attach(part)
+            params = {
+                "from": f"{self.from_name} <{self.from_email}>",
+                "to": to_email,
+                "subject": subject,
+                "html": html_content,
+            }
 
-            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
-                server.starttls()
-                server.login(self.sender_email, self.sender_password)
-                server.sendmail(self.sender_email, to_email, message.as_string())
-
+            response = resend.Emails.send(params)  # type: ignore
+            logger.info(f"[EMAIL] Sent to {to_email}, subject: {subject}")
             return True
+
         except Exception as e:
-            print(f"[ERROR] Failed to send email to {to_email}: {str(e)}")
+            logger.error(f"[EMAIL] Failed to send email to {to_email}: {str(e)}")
             return False
 
+    async def send_verification_email(
+        self, to_email: str, token: str, recipient_name: str = "Usuario"
+    ) -> bool:
+        """Send email verification link to user."""
+        verification_link = f"{self.app_url}/verify-email?token={token}"
 
-# Singleton instance
+        html_content = get_verification_email_html(
+            recipient_name=recipient_name,
+            verification_link=verification_link,
+            app_name=self.app_name,
+        )
+
+        subject = "Verifica tu correo electrónico - OptiCredit"
+
+        if settings.environment == "development":
+            logger.info(f"[EMAIL DEV] To: {to_email}")
+            logger.info(f"[EMAIL DEV] Subject: {subject}")
+            logger.info(f"[EMAIL DEV] Link: {verification_link}")
+            return True
+
+        return await self._send_via_resend(to_email, subject, html_content)
+
+    async def send_password_reset_email(
+        self, to_email: str, token: str, recipient_name: str = "Usuario"
+    ) -> bool:
+        """Send password reset link to user."""
+        reset_link = f"{self.app_url}/reset-password?token={token}"
+
+        html_content = get_password_reset_email_html(
+            recipient_name=recipient_name, reset_link=reset_link, app_name=self.app_name
+        )
+
+        subject = "Restablecer Contraseña - OptiCredit"
+
+        if settings.environment == "development":
+            logger.info(f"[EMAIL DEV] To: {to_email}")
+            logger.info(f"[EMAIL DEV] Subject: {subject}")
+            logger.info(f"[EMAIL DEV] Link: {reset_link}")
+            return True
+
+        return await self._send_via_resend(to_email, subject, html_content)
+
+    async def send_otp_email(
+        self, to_email: str, otp_code: str, recipient_name: str = "Usuario"
+    ) -> bool:
+        """Send OTP code to user."""
+        html_content = get_otp_email_html(
+            recipient_name=recipient_name, otp_code=otp_code, app_name=self.app_name
+        )
+
+        subject = "Tu código de verificación - OptiCredit"
+
+        if settings.environment == "development":
+            logger.info(f"[EMAIL DEV] To: {to_email}")
+            logger.info(f"[EMAIL DEV] Subject: {subject}")
+            logger.info(f"[EMAIL DEV] OTP: {otp_code}")
+            return True
+
+        return await self._send_via_resend(to_email, subject, html_content)
+
+    async def send_welcome_email(
+        self, to_email: str, recipient_name: str = "Usuario"
+    ) -> bool:
+        """Send welcome email after email verification."""
+        html_content = get_welcome_email_html(
+            recipient_name=recipient_name, app_name=self.app_name, app_url=self.app_url
+        )
+
+        subject = "Bienvenido/a a OptiCredit"
+
+        if settings.environment == "development":
+            logger.info(f"[EMAIL DEV] To: {to_email}")
+            logger.info(f"[EMAIL DEV] Subject: {subject}")
+            return True
+
+        return await self._send_via_resend(to_email, subject, html_content)
+
+    async def send_email(
+        self, to_email: str, subject: str, body: str, is_html: bool = False
+    ) -> bool:
+        """Send generic email."""
+        if not is_html:
+            body = f"<html><body><pre style='font-family: monospace;'>{body}</pre></body></html>"
+
+        if settings.environment == "development":
+            logger.info(f"[EMAIL DEV] To: {to_email}")
+            logger.info(f"[EMAIL DEV] Subject: {subject}")
+            logger.info(f"[EMAIL DEV] Body: {body[:200]}...")
+            return True
+
+        return await self._send_via_resend(to_email, subject, body)
+
+    async def send_support_request(
+        self, name: str, email: str, subject: str, message: str
+    ) -> bool:
+        """Send support request to support inbox."""
+        html_content = f"""
+        <html>
+        <body>
+            <h2>New Support Request</h2>
+            <p><strong>Name:</strong> {name}</p>
+            <p><strong>Email:</strong> {email}</p>
+            <p><strong>Subject:</strong> {subject}</p>
+            <hr>
+            <p><strong>Message:</strong></p>
+            <pre>{message}</pre>
+        </body>
+        </html>
+        """
+
+        if settings.environment == "development":
+            logger.info(f"[EMAIL DEV] Support request from {email}")
+            logger.info(f"[EMAIL DEV] Subject: {subject}")
+            return True
+
+        return await self._send_via_resend(
+            self.support_email, f"Support: {subject}", html_content
+        )
+
+
 email_service = EmailService()

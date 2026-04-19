@@ -13,7 +13,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(case_sensitive=False, extra="ignore")
 
     # Database
-    database_url: str = "postgresql+asyncpg://prestamos_user:prestamos_pass@localhost:5432/prestamos_db"
+    database_url: str = (
+        "postgresql+asyncpg://prestamos_user:prestamos_pass@localhost:5432/prestamos_db"
+    )
 
     # Security
     secret_key: str = "change-me-in-production"
@@ -25,10 +27,15 @@ class Settings(BaseSettings):
     app_url: str = "http://localhost:3000"
     enable_startup_seed: bool = False
 
-    # Email
-    smtp_email: str = "noreply@prestamos.local"
+    # Email (Resend)
+    mail_resend_api_key: str = ""
+    mail_from_email: str = "OptiCredit <noreply@opticredit.app>"
+    mail_from_name: str = "OptiCredit"
+    support_inbox_email: str = "support@opticredit.app"
+
+    # Legacy SMTP (deprecated - use Resend)
+    smtp_email: str = ""
     smtp_password: str = ""
-    support_inbox_email: str = "support@prestamos.local"
 
     # SMS (Twilio)
     sms_enabled: bool = False

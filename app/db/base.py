@@ -14,4 +14,5 @@ from app.models.payment import Payment, Voucher, OcrResult, PaymentMatch  # noqa
 from app.models.subscription import Subscription, SubscriptionInvoice  # noqa: E402,F401
 from app.models.notification import Notification  # noqa: E402,F401
 from app.models.support_request import SupportRequest
-from app.models.audit_log import AuditLog  # noqa: E402,F401
+from app.models.audit_log import AuditLog
+from app.models.lender_document import LenderDocument  # noqa: E402,F401

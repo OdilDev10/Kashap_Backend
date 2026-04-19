@@ -82,6 +82,18 @@ class DocumentType(str, Enum):
     OTHER = "other"
 
 
+class LenderDocumentType(str, Enum):
+    """Tipo de documento legal del prestamista (RNC, licencia, registro)."""
+
+    RNC = "rnc"
+    REPRESENTATIVE_ID_FRONT = "representative_id_front"
+    REPRESENTATIVE_ID_BACK = "representative_id_back"
+    OPERATING_LICENSE = "operating_license"
+    TRADE_REGISTRY = "trade_registry"
+    TAX_ID = "tax_id"
+    OTHER = "other"
+
+
 class DocumentStatus(str, Enum):
     """Estado de validación de documento."""
 

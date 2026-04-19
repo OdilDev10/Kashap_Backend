@@ -47,7 +47,7 @@ async def submit_support_contact(
     await session.commit()
     await session.refresh(request_row)
 
-    inbox = (settings.support_inbox_email or settings.smtp_email or "").strip()
+    inbox = settings.support_inbox_email
     if inbox:
         subject = f"[Soporte] Nueva solicitud de {request_row.name}"
         body = (
