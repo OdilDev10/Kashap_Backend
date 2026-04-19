@@ -29,6 +29,7 @@ from app.core.exceptions import (
     ForbiddenException,
     ValidationException,
 )
+from app.core.error_codes import ErrorCode, get_error_response
 
 
 router = APIRouter(prefix="/me", tags=["customer-portal"])
@@ -87,7 +88,15 @@ async def _assert_customer_linked_to_lender(
         )
     )
     if link_result.scalar_one_or_none() is None:
-        raise ForbiddenException("No tienes asociación activa con esta financiera")
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=get_error_response(
+                ErrorCode.AUTH_PERMISSION_DENIED,
+                "No tienes asociación activa con esta financiera",
+            ),
+        )
 
 
 async def get_current_customer(
@@ -100,7 +109,14 @@ async def get_current_customer(
     # Customer portal is only valid for customer users.
     role_value = getattr(current_user.role, "value", current_user.role)
     if role_value != "customer":
-        raise ForbiddenException("Customer account required")
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=get_error_response(
+                ErrorCode.AUTH_PERMISSION_DENIED, "Cuenta de cliente requerida"
+            ),
+        )
 
     customer = await repo.get_by_user_id(current_user.id)
     if customer:
@@ -111,7 +127,14 @@ async def get_current_customer(
         current_user.email, current_user.lender_id
     )
     if not customer:
-        raise NotFoundException("No customer profile found for this user")
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=get_error_response(
+                ErrorCode.NOT_FOUND_CUSTOMER, "No se encontró perfil de cliente"
+            ),
+        )
 
     if customer.user_id is None:
         await repo.update(customer, {"user_id": current_user.id})
@@ -139,7 +162,25 @@ async def get_my_loans(
             )
         )
         if link_result.scalar_one_or_none() is None:
-            raise ForbiddenException("No tienes asociación activa con esta financiera")
+            from fastapi import HTTPException
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=get_error_response(
+                ErrorCode.AUTH_PERMISSION_DENIED,
+                "No tienes asociación activa con esta financiera",
+            ),
+        )
+
+    if not link_result.scalar_one_or_none():
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=get_error_response(
+                ErrorCode.AUTH_PERMISSION_DENIED,
+                "No tienes asociación activa con esta financiera",
+            ),
+        )
         loans = await loan_repo.get_by_customer_and_lender(
             str(customer.id), str(lender_id)
         )
@@ -459,7 +500,15 @@ async def get_my_loan_detail(
     loan = await loan_repo.get_or_404(str(loan_id))
 
     if loan.customer_id != customer.id:
-        raise ForbiddenException("You do not have permission to view this loan")
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=get_error_response(
+                ErrorCode.AUTH_PERMISSION_DENIED,
+                "No tienes permiso para ver este préstamo",
+            ),
+        )
 
     installments = await installment_repo.get_by_loan(str(loan.id))
     balance = loan.total_amount - sum(inst.amount_paid for inst in installments)
@@ -519,7 +568,25 @@ async def get_my_payments(
             )
         )
         if link_result.scalar_one_or_none() is None:
-            raise ForbiddenException("No tienes asociación activa con esta financiera")
+            from fastapi import HTTPException
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=get_error_response(
+                ErrorCode.AUTH_PERMISSION_DENIED,
+                "No tienes asociación activa con esta financiera",
+            ),
+        )
+
+    if not link_result.scalar_one_or_none():
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=get_error_response(
+                ErrorCode.AUTH_PERMISSION_DENIED,
+                "No tienes asociación activa con esta financiera",
+            ),
+        )
         payments = [payment for payment in payments if payment.lender_id == lender_id]
 
     items = []

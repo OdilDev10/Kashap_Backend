@@ -2,9 +2,11 @@
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Any
 from time import perf_counter
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -17,6 +19,67 @@ from app.services.startup_seed import run_startup_seed
 
 logger = logging.getLogger("app.http")
 logger.setLevel(logging.INFO)
+
+
+def _build_error_response(code: str, message: str, detail: Any = None) -> dict[str, Any]:
+    return {
+        "success": False,
+        "error": {
+            "code": code,
+            "message": message,
+            "detail": detail,
+        },
+    }
+
+
+def _status_code_to_error_code(status_code: int) -> str:
+    if status_code == status.HTTP_400_BAD_REQUEST:
+        return "VALIDATION_ERROR"
+    if status_code == status.HTTP_401_UNAUTHORIZED:
+        return "UNAUTHORIZED"
+    if status_code == status.HTTP_403_FORBIDDEN:
+        return "FORBIDDEN"
+    if status_code == status.HTTP_404_NOT_FOUND:
+        return "NOT_FOUND"
+    if status_code == status.HTTP_409_CONFLICT:
+        return "CONFLICT"
+    if status_code == status.HTTP_422_UNPROCESSABLE_ENTITY:
+        return "VALIDATION_ERROR"
+    return "INTERNAL_ERROR"
+
+
+def _normalize_http_exception_detail(
+    status_code: int,
+    detail: Any,
+) -> tuple[str, str, Any]:
+    default_code = _status_code_to_error_code(status_code)
+    default_message = (
+        "Error de validación"
+        if status_code in {status.HTTP_400_BAD_REQUEST, status.HTTP_422_UNPROCESSABLE_ENTITY}
+        else "Solicitud inválida"
+    )
+
+    if isinstance(detail, dict):
+        if detail.get("success") is False and isinstance(detail.get("error"), dict):
+            error_obj = detail.get("error", {})
+            return (
+                str(error_obj.get("code") or default_code),
+                str(error_obj.get("message") or default_message),
+                error_obj.get("detail"),
+            )
+        return (
+            str(detail.get("code") or default_code),
+            str(detail.get("message") or default_message),
+            detail.get("detail"),
+        )
+
+    if isinstance(detail, list):
+        return default_code, default_message, detail
+
+    if isinstance(detail, str) and detail.strip():
+        return default_code, detail, None
+
+    return default_code, default_message, None
 
 
 @asynccontextmanager
@@ -114,11 +177,58 @@ async def handle_app_exception(_: Request, exc: AppException) -> JSONResponse:
 
     return JSONResponse(
         status_code=status_code,
-        content={
-            "success": False,
-            "error": {
-                "code": exc.code,
-                "message": exc.message,
-            },
-        },
+        content=_build_error_response(
+            code=exc.code,
+            message=exc.message,
+            detail=None,
+        ),
+    )
+
+
+@app.exception_handler(HTTPException)
+async def handle_http_exception(_: Request, exc: HTTPException) -> JSONResponse:
+    """Normalize FastAPI HTTPException to a single error contract."""
+    code, message, detail = _normalize_http_exception_detail(exc.status_code, exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=_build_error_response(code=code, message=message, detail=detail),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def handle_request_validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+    """Normalize request body/query/path validation errors."""
+    issues = []
+    for err in exc.errors():
+        loc_parts = [str(part) for part in err.get("loc", [])]
+        field = ".".join(loc_parts[1:]) if len(loc_parts) > 1 else ".".join(loc_parts)
+        issues.append(
+            {
+                "field": field or "body",
+                "message": err.get("msg", "Error de validación"),
+                "type": err.get("type", "validation_error"),
+            }
+        )
+
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content=_build_error_response(
+            code="VALIDATION_ERROR",
+            message="Error de validación",
+            detail=issues,
+        ),
+    )
+
+
+@app.exception_handler(Exception)
+async def handle_unexpected_exception(_: Request, exc: Exception) -> JSONResponse:
+    """Fallback error handler to avoid leaking unstructured 500 errors."""
+    logger.exception("Unhandled exception: %s", exc)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=_build_error_response(
+            code="INTERNAL_SERVER_ERROR",
+            message="Error interno del servidor",
+            detail=None,
+        ),
     )

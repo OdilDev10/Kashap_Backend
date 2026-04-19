@@ -3,6 +3,7 @@ import json
 from typing import Literal
 
 from pydantic import field_validator
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -41,7 +42,7 @@ class Settings(BaseSettings):
     braintree_private_key: str = ""
 
     # Storage
-    storage_backend: Literal["local", "r2"] = "local"
+    storage_backend: Literal["local", "r2"] = "r2"
     local_storage_path: str = "/app/uploads"
 
     # Cloudflare R2
@@ -93,6 +94,33 @@ class Settings(BaseSettings):
                     pass
             return [item.strip() for item in raw.split(",") if item.strip()]
         return value
+
+    @field_validator("storage_backend", mode="before")
+    @classmethod
+    def _force_r2_backend(cls, value):
+        """Always force R2 backend even if env accidentally sets local."""
+        if isinstance(value, str) and value.strip().lower() == "local":
+            return "r2"
+        return value
+
+    @model_validator(mode="after")
+    def _validate_storage_backend(self):
+        """Force R2-ready configuration when storage backend is enabled as r2."""
+        missing = []
+        if not self.r2_endpoint_url.strip():
+            missing.append("R2_ENDPOINT_URL")
+        if not self.r2_access_key_id.strip():
+            missing.append("R2_ACCESS_KEY_ID")
+        if not self.r2_secret_access_key.strip():
+            missing.append("R2_SECRET_ACCESS_KEY")
+        if not self.r2_bucket_name.strip():
+            missing.append("R2_BUCKET_NAME")
+
+        if missing:
+            missing_envs = ", ".join(missing)
+            raise ValueError(f"Missing required R2 env vars: {missing_envs}")
+
+        return self
 
 
 # Global settings instance

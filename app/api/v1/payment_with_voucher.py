@@ -9,8 +9,8 @@ is REQUIRED and submitted together with the payment data. This ensures:
 
 from uuid import UUID
 from decimal import Decimal
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, status, Form
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -32,7 +32,7 @@ from app.repositories.payment_repo import (
     OcrResultRepository,
 )
 from app.repositories.customer_repo import CustomerRepository
-from app.core.exceptions import ForbiddenException, ValidationException
+from app.core.exceptions import ForbiddenException
 from app.core.error_codes import ErrorCode, get_error_response
 from app.services.storage_service import storage_service
 from app.services.ocr_service import OCRService
@@ -63,14 +63,6 @@ async def get_customer_from_user(
     return customer
 
 
-class PaymentWithVoucherRequest(BaseModel):
-    """Request body for payment with voucher (non-file fields)."""
-
-    loan_id: str = Field(..., description="Loan ID")
-    installment_id: str = Field(..., description="Installment ID")
-    amount: Decimal = Field(..., gt=0, description="Payment amount")
-
-
 class PaymentWithVoucherResponse(BaseModel):
     """Response for successful payment with voucher."""
 
@@ -80,12 +72,15 @@ class PaymentWithVoucherResponse(BaseModel):
     voucher_uploaded: bool
     voucher_id: str
     ocr_status: str
+    idempotent: bool = False
     message: str
 
 
 @router.post("/payments/with-voucher", response_model=PaymentWithVoucherResponse)
 async def submit_payment_with_voucher(
-    request_data: PaymentWithVoucherRequest,
+    loan_id: str = Form(...),
+    installment_id: str = Form(...),
+    amount: str = Form(...),
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     customer: Customer = Depends(get_customer_from_user),
@@ -93,7 +88,7 @@ async def submit_payment_with_voucher(
 ) -> PaymentWithVoucherResponse:
     """Submit payment WITH voucher atomically.
 
-    This is the ONLY endpoint for customer payment submission.
+    All fields received as multipart/form-data.
     The voucher is mandatory - no payment without voucher.
 
     Idempotency: Same image hash = same payment ID allowed (retry same payment).
@@ -104,12 +99,31 @@ async def submit_payment_with_voucher(
     payment_repo = PaymentRepository(session)
     voucher_repo = VoucherRepository(session)
 
+    # Parse amount from string
+    try:
+        amount_decimal = Decimal(amount)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=get_error_response(
+                ErrorCode.VALIDATION_FORMAT_ERROR, "Monto inválido"
+            ),
+        )
+
+    if amount_decimal <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=get_error_response(
+                ErrorCode.VALIDATION_GENERIC, "El monto debe ser positivo"
+            ),
+        )
+
     # Validate file type
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=get_error_response(
-                ErrorCode.FILE_INVALID_TYPE, "Only image files are allowed"
+                ErrorCode.FILE_INVALID_TYPE, "Solo se permiten imágenes"
             ),
         )
 
@@ -119,7 +133,7 @@ async def submit_payment_with_voucher(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=get_error_response(
-                ErrorCode.FILE_TOO_LARGE, "File exceeds 10MB limit"
+                ErrorCode.FILE_TOO_LARGE, "La imagen excede 10MB"
             ),
         )
 
@@ -127,43 +141,34 @@ async def submit_payment_with_voucher(
     image_hash = hashlib.sha256(file_content).hexdigest()
 
     # Validate loan exists and customer owns it
-    loan = await loan_repo.get_or_404(request_data.loan_id)
+    loan = await loan_repo.get_or_404(loan_id)
     if loan.customer_id != customer.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=get_error_response(
                 ErrorCode.AUTH_PERMISSION_DENIED,
-                "This loan does not belong to your account",
+                "Este préstamo no pertenece a tu cuenta",
             ),
         )
 
     # Validate installment
-    installment = await installment_repo.get_or_404(request_data.installment_id)
-    if str(installment.loan_id) != request_data.loan_id:
+    installment = await installment_repo.get_or_404(installment_id)
+    if str(installment.loan_id) != loan_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=get_error_response(
                 ErrorCode.BUSINESS_INVALID_INSTALLMENT,
-                "Installment does not belong to the specified loan",
-            ),
-        )
-
-    # Validate amount
-    if request_data.amount <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=get_error_response(
-                ErrorCode.VALIDATION_GENERIC, "Payment amount must be positive"
+                "La cuota no pertenece a este préstamo",
             ),
         )
 
     remaining = installment.amount_due - installment.amount_paid
-    if request_data.amount > remaining:
+    if amount_decimal > remaining:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=get_error_response(
                 ErrorCode.PAYMENT_AMOUNT_MISMATCH,
-                f"Payment amount exceeds remaining balance of {remaining}",
+                f"El monto excede el saldo pendiente de {remaining}",
             ),
         )
 
@@ -179,7 +184,7 @@ async def submit_payment_with_voucher(
             # Same customer + same installment = idempotent retry
             if str(existing_payment.customer_id) == str(customer.id) and str(
                 existing_payment.installment_id
-            ) == str(request_data.installment_id):
+            ) == str(installment_id):
                 return PaymentWithVoucherResponse(
                     success=True,
                     payment_id=str(existing_payment.id),
@@ -187,7 +192,8 @@ async def submit_payment_with_voucher(
                     voucher_uploaded=True,
                     voucher_id=str(existing_voucher.id),
                     ocr_status="processed",
-                    message="Payment already exists with same voucher (idempotent retry).",
+                    idempotent=True,
+                    message="Pago ya existente con mismo comprobante (reintento idempotente).",
                 )
 
             # Different payment with same image = fraud
@@ -195,7 +201,7 @@ async def submit_payment_with_voucher(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=get_error_response(
                     ErrorCode.PAYMENT_VOUCHER_ALREADY_USED,
-                    "This voucher image was already used in another payment. Use a different image.",
+                    "Esta imagen ya fue usada en otro pago. Usa una imagen diferente.",
                 ),
             )
 
@@ -204,9 +210,9 @@ async def submit_payment_with_voucher(
         {
             "lender_id": str(loan.lender_id),
             "customer_id": str(customer.id),
-            "loan_id": request_data.loan_id,
-            "installment_id": request_data.installment_id,
-            "amount": request_data.amount,
+            "loan_id": loan_id,
+            "installment_id": installment_id,
+            "amount": amount_decimal,
             "currency": "RD$",
             "method": "bank_transfer",
             "source": "customer_portal",
@@ -242,7 +248,7 @@ async def submit_payment_with_voucher(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=get_error_response(
-                ErrorCode.FILE_UPLOAD_FAILED, f"Failed to upload voucher: {str(e)}"
+                ErrorCode.FILE_UPLOAD_FAILED, f"Error al subir comprobante: {str(e)}"
             ),
         )
 
@@ -258,7 +264,8 @@ async def submit_payment_with_voucher(
         voucher_uploaded=True,
         voucher_id=str(voucher.id),
         ocr_status="pending",
-        message="Payment submitted successfully. Voucher uploaded and OCR processing started. Await lender approval.",
+        idempotent=False,
+        message="Pago enviado. Comprobante subido y OCR en proceso. Espera aprobación.",
     )
 
 
@@ -271,7 +278,6 @@ async def _process_voucher_ocr_async(
             voucher_repo = VoucherRepository(session)
             ocr_repo = OcrResultRepository(session)
 
-            # Get voucher
             voucher_result = await session.execute(
                 select(Voucher).where(Voucher.id == UUID(voucher_id))
             )
@@ -279,7 +285,6 @@ async def _process_voucher_ocr_async(
             if not voucher:
                 return
 
-            # Run OCR
             ocr_service = OCRService()
             try:
                 file_content = await storage_service.download(file_url)
@@ -294,15 +299,13 @@ async def _process_voucher_ocr_async(
                     "detected_bank_name": None,
                     "confidence_score": 0.0,
                     "appears_to_be_receipt": False,
-                    "validation_summary": "OCR skipped - download failed",
+                    "validation_summary": "OCR omitido - descarga falló",
                     "status": "success",
                 }
 
-            # Update voucher status
             voucher.status = VoucherStatus.PROCESSED
             await session.merge(voucher)
 
-            # Save OCR result
             await ocr_repo.create(
                 {
                     "voucher_id": voucher_id,
@@ -343,7 +346,7 @@ async def _process_voucher_ocr_async(
                     {
                         "voucher_id": voucher_id,
                         "status": "failed",
-                        "validation_summary": f"Processing error: {str(e)}",
+                        "validation_summary": f"Error: {str(e)}",
                         "confidence_score": 0.0,
                         "appears_to_be_receipt": False,
                     }

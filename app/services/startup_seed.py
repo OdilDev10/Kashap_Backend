@@ -22,7 +22,11 @@ from app.core.enums import (
     UserStatus,
 )
 from app.core.security import hash_password
-from app.core.utils import generate_installment_schedule
+from app.core.utils import (
+    generate_installment_schedule,
+    generate_loan_number,
+    generate_payment_number,
+)
 from app.models.client_bank_account import ClientBankAccount
 from app.models.customer import Customer
 from app.models.customer_lender_link import CustomerLenderLink
@@ -36,7 +40,16 @@ from app.models.loan import (
     LoanStatus,
 )
 from app.models.loan_application import LoanApplication, LoanApplicationStatus
-from app.models.payment import OcrResult, OcrStatus, Payment, PaymentMethod, PaymentSource, PaymentStatus, Voucher, VoucherStatus
+from app.models.payment import (
+    OcrResult,
+    OcrStatus,
+    Payment,
+    PaymentMethod,
+    PaymentSource,
+    PaymentStatus,
+    Voucher,
+    VoucherStatus,
+)
 from app.models.user import User
 
 logger = logging.getLogger("app.seed")
@@ -237,7 +250,9 @@ SEED_LOANS = [
 
 
 async def _upsert_lender(session, payload: dict[str, Any]) -> Lender:
-    result = await session.execute(select(Lender).where(Lender.email == payload["email"]))
+    result = await session.execute(
+        select(Lender).where(Lender.email == payload["email"])
+    )
     lender = result.scalar_one_or_none()
 
     if lender is None:
@@ -253,7 +268,9 @@ async def _upsert_lender(session, payload: dict[str, Any]) -> Lender:
     return lender
 
 
-async def _upsert_user(session, payload: dict[str, Any], lender_map: dict[str, Lender]) -> User:
+async def _upsert_user(
+    session, payload: dict[str, Any], lender_map: dict[str, Lender]
+) -> User:
     result = await session.execute(select(User).where(User.email == payload["email"]))
     user = result.scalar_one_or_none()
     lender = lender_map.get(payload["lender_key"]) if payload["lender_key"] else None
@@ -288,7 +305,9 @@ async def _upsert_customer_profile(
     customer_user: User,
     default_lender: Lender,
 ) -> Customer:
-    result = await session.execute(select(Customer).where(Customer.user_id == customer_user.id))
+    result = await session.execute(
+        select(Customer).where(Customer.user_id == customer_user.id)
+    )
     customer = result.scalar_one_or_none()
 
     values = {
@@ -320,7 +339,9 @@ async def _upsert_customer_profile(
     return customer
 
 
-async def _ensure_customer_links(session, customer: Customer, lender_map: dict[str, Lender]) -> None:
+async def _ensure_customer_links(
+    session, customer: Customer, lender_map: dict[str, Lender]
+) -> None:
     for lender_key in CUSTOMER_ASSOCIATIONS:
         lender = lender_map[lender_key]
         result = await session.execute(
@@ -341,7 +362,9 @@ async def _ensure_customer_links(session, customer: Customer, lender_map: dict[s
             link.status = LinkStatus.LINKED
 
 
-async def _upsert_lender_accounts(session, lender: Lender, accounts: list[dict[str, Any]]) -> None:
+async def _upsert_lender_accounts(
+    session, lender: Lender, accounts: list[dict[str, Any]]
+) -> None:
     for account_data in accounts:
         expected_last4 = account_data["account_number_masked"][-4:]
         by_bank_result = await session.execute(
@@ -383,7 +406,8 @@ async def _upsert_lender_accounts(session, lender: Lender, accounts: list[dict[s
                 and_(
                     LenderBankAccount.lender_id == lender.id,
                     LenderBankAccount.bank_name == account_data["bank_name"],
-                    LenderBankAccount.account_number_masked == account_data["account_number_masked"],
+                    LenderBankAccount.account_number_masked
+                    == account_data["account_number_masked"],
                 )
             )
         )
@@ -402,7 +426,8 @@ async def _upsert_client_accounts(session, customer: Customer) -> None:
                 and_(
                     ClientBankAccount.customer_id == customer.id,
                     ClientBankAccount.bank_name == account_data["bank_name"],
-                    ClientBankAccount.account_number_masked == account_data["account_number_masked"],
+                    ClientBankAccount.account_number_masked
+                    == account_data["account_number_masked"],
                 )
             )
         )
@@ -504,18 +529,33 @@ async def _upsert_seed_payment(
     status: PaymentStatus,
     voucher_status: VoucherStatus | None,
     with_ocr: bool,
+    counters: dict[str, int],
+    year: int,
 ) -> None:
-    result = await session.execute(select(Payment).where(Payment.review_notes == marker))
+    result = await session.execute(
+        select(Payment).where(Payment.review_notes == marker)
+    )
     payment = result.scalar_one_or_none()
 
-    reviewed_at = datetime.now(timezone.utc) if status in {PaymentStatus.UNDER_REVIEW, PaymentStatus.APPROVED} else None
+    reviewed_at = (
+        datetime.now(timezone.utc)
+        if status in {PaymentStatus.UNDER_REVIEW, PaymentStatus.APPROVED}
+        else None
+    )
     reviewed_by_user_id = submitted_by_user_id if reviewed_at else None
+
+    if payment is None:
+        counters["payment"] += 1
+        payment_number = generate_payment_number(counters["payment"], year)
+    else:
+        payment_number = payment.payment_number
 
     payment_values = {
         "lender_id": lender.id,
         "customer_id": customer.id,
         "loan_id": loan.id,
         "installment_id": installment.id,
+        "payment_number": payment_number,
         "amount": amount,
         "currency": "DOP",
         "method": PaymentMethod.BANK_TRANSFER,
@@ -539,7 +579,9 @@ async def _upsert_seed_payment(
         return
 
     image_hash = f"seed-{marker.lower().replace(':', '-')}"
-    voucher_result = await session.execute(select(Voucher).where(Voucher.image_hash == image_hash))
+    voucher_result = await session.execute(
+        select(Voucher).where(Voucher.image_hash == image_hash)
+    )
     voucher = voucher_result.scalar_one_or_none()
     voucher_values = {
         "payment_id": payment.id,
@@ -560,7 +602,9 @@ async def _upsert_seed_payment(
         for key, value in voucher_values.items():
             setattr(voucher, key, value)
 
-    ocr_result = await session.execute(select(OcrResult).where(OcrResult.voucher_id == voucher.id))
+    ocr_result = await session.execute(
+        select(OcrResult).where(OcrResult.voucher_id == voucher.id)
+    )
     existing_ocr = ocr_result.scalar_one_or_none()
     if not with_ocr:
         if existing_ocr is not None:
@@ -593,10 +637,13 @@ async def _upsert_seed_loans(
     customer: Customer,
     manager_user: User,
     lender_map: dict[str, Lender],
+    counters: dict[str, int],
 ) -> None:
+    year = datetime.now().year
     for scenario in SEED_LOANS:
         lender = lender_map[scenario["lender_key"]]
         purpose = f"SEED:{scenario['code']}"
+
         app_result = await session.execute(
             select(LoanApplication).where(
                 LoanApplication.customer_id == customer.id,
@@ -631,14 +678,33 @@ async def _upsert_seed_loans(
             application.reviewed_at = datetime.now(timezone.utc)
             application.review_notes = "Seed auto approved"
 
-        loan_number = f"SEED-{scenario['code']}"
-        loan_result = await session.execute(select(Loan).where(Loan.loan_number == loan_number))
+        lender_prefix = (
+            lender.commercial_name[:4].upper().replace(" ", "")
+            if lender.commercial_name
+            else "LOAN"
+        )
+
+        loan_result = await session.execute(
+            select(Loan).where(
+                Loan.lender_id == lender.id,
+                Loan.customer_id == customer.id,
+                Loan.loan_application_id == application.id,
+            )
+        )
         loan = loan_result.scalar_one_or_none()
 
-        first_due_date = date.today() + timedelta(days=scenario["first_due_offset_days"])
+        if loan is None:
+            counters["loan"] += 1
+            loan_number = generate_loan_number(counters["loan"], lender_prefix, year)
+        else:
+            loan_number = loan.loan_number
+
+        first_due_date = date.today() + timedelta(
+            days=scenario["first_due_offset_days"]
+        )
         schedule = generate_installment_schedule(
-            principal=float(scenario["principal"]),
-            annual_interest_rate=float(scenario["annual_rate"]),
+            principal=scenario["principal"],
+            annual_interest_rate=scenario["annual_rate"],
             num_installments=scenario["installments_count"],
             frequency=scenario["frequency"],
             start_date=datetime.combine(first_due_date, datetime.min.time()),
@@ -658,7 +724,8 @@ async def _upsert_seed_loans(
             "total_amount": total_amount,
             "installments_count": scenario["installments_count"],
             "frequency": scenario["frequency"],
-            "disbursement_date": date.today() - timedelta(days=scenario["disbursement_offset_days"]),
+            "disbursement_date": date.today()
+            - timedelta(days=scenario["disbursement_offset_days"]),
             "first_due_date": first_due_date,
             "status": scenario["status"],
             "approved_by": manager_user.id,
@@ -674,7 +741,9 @@ async def _upsert_seed_loans(
             for key, value in loan_values.items():
                 setattr(loan, key, value)
 
-        dis_result = await session.execute(select(Disbursement).where(Disbursement.loan_id == loan.id))
+        dis_result = await session.execute(
+            select(Disbursement).where(Disbursement.loan_id == loan.id)
+        )
         disbursement = dis_result.scalars().first()
         dis_values = {
             "loan_id": loan.id,
@@ -694,7 +763,9 @@ async def _upsert_seed_loans(
                 setattr(disbursement, key, value)
 
         installments_by_number: dict[int, Installment] = {}
-        existing_result = await session.execute(select(Installment).where(Installment.loan_id == loan.id))
+        existing_result = await session.execute(
+            select(Installment).where(Installment.loan_id == loan.id)
+        )
         for row in existing_result.scalars().all():
             installments_by_number[row.installment_number] = row
 
@@ -705,7 +776,9 @@ async def _upsert_seed_loans(
             amount_paid = scenario["paid_installments"].get(number, Decimal("0.00"))
             if number in scenario["partial_installments"]:
                 amount_paid = scenario["partial_installments"][number]
-            status = _calc_installment_status(item["due_date"].date(), amount_due, amount_paid)
+            status = _calc_installment_status(
+                item["due_date"].date(), amount_due, amount_paid
+            )
 
             inst_values = {
                 "loan_id": loan.id,
@@ -717,7 +790,9 @@ async def _upsert_seed_loans(
                 "amount_paid": amount_paid,
                 "late_fee_amount": Decimal("0.00"),
                 "status": status,
-                "paid_at": datetime.now(timezone.utc) - timedelta(days=1) if status == InstallmentStatus.PAID else None,
+                "paid_at": datetime.now(timezone.utc) - timedelta(days=1)
+                if status == InstallmentStatus.PAID
+                else None,
             }
 
             if installment is None:
@@ -750,9 +825,15 @@ async def _upsert_seed_loans(
             status=PaymentStatus.APPROVED,
             voucher_status=VoucherStatus.PROCESSED,
             with_ocr=True,
+            counters=counters,
+            year=year,
         )
 
-        second_installment = ordered_installments[1] if len(ordered_installments) > 1 else first_installment
+        second_installment = (
+            ordered_installments[1]
+            if len(ordered_installments) > 1
+            else first_installment
+        )
         await _upsert_seed_payment(
             session,
             marker=f"SEED:{loan_number}:UNDER_REVIEW",
@@ -765,9 +846,15 @@ async def _upsert_seed_loans(
             status=PaymentStatus.UNDER_REVIEW,
             voucher_status=VoucherStatus.PROCESSED,
             with_ocr=True,
+            counters=counters,
+            year=year,
         )
 
-        pending_installment = ordered_installments[2] if len(ordered_installments) > 2 else second_installment
+        pending_installment = (
+            ordered_installments[2]
+            if len(ordered_installments) > 2
+            else second_installment
+        )
         await _upsert_seed_payment(
             session,
             marker=f"SEED:{loan_number}:SUBMITTED",
@@ -780,6 +867,8 @@ async def _upsert_seed_loans(
             status=PaymentStatus.SUBMITTED,
             voucher_status=VoucherStatus.UPLOADED,
             with_ocr=False,
+            counters=counters,
+            year=year,
         )
 
 
@@ -792,7 +881,9 @@ async def run_startup_seed() -> None:
 
         user_map: dict[str, User] = {}
         for user_data in SEED_USERS:
-            user_map[user_data["email"]] = await _upsert_user(session, user_data, lender_map)
+            user_map[user_data["email"]] = await _upsert_user(
+                session, user_data, lender_map
+            )
 
         customer_user = user_map["cliente@opticredit.app"]
         customer = await _upsert_customer_profile(
@@ -806,7 +897,11 @@ async def run_startup_seed() -> None:
         for lender_key, accounts in LENDER_ACCOUNTS.items():
             await _upsert_lender_accounts(session, lender_map[lender_key], accounts)
             preferred = next(
-                (acc["account_number_masked"] for acc in accounts if acc.get("is_primary")),
+                (
+                    acc["account_number_masked"]
+                    for acc in accounts
+                    if acc.get("is_primary")
+                ),
                 None,
             )
             await _normalize_lender_primary_account(
@@ -817,7 +912,11 @@ async def run_startup_seed() -> None:
 
         await _upsert_client_accounts(session, customer)
         preferred_client = next(
-            (acc["account_number_masked"] for acc in CLIENT_ACCOUNTS if acc.get("is_primary")),
+            (
+                acc["account_number_masked"]
+                for acc in CLIENT_ACCOUNTS
+                if acc.get("is_primary")
+            ),
             None,
         )
         await _normalize_client_primary_account(
@@ -827,11 +926,19 @@ async def run_startup_seed() -> None:
         )
 
         manager_user = user_map["manager@opticredit.app"]
+        counters: dict[str, int] = {
+            "loan": 0,
+            "payment": 0,
+            "application": 0,
+            "customer": 0,
+            "user": 0,
+        }
         await _upsert_seed_loans(
             session,
             customer=customer,
             manager_user=manager_user,
             lender_map=lender_map,
+            counters=counters,
         )
 
         await session.commit()

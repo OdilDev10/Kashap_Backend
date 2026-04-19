@@ -129,3 +129,54 @@ def get_error_response(code: ErrorCode, detail: str | None = None) -> dict:
             "detail": detail,
         },
     }
+
+
+def raise_http_error(
+    status_code: int, code: ErrorCode, detail: str | None = None
+) -> None:
+    """Raise an HTTPException with standardized error response.
+
+    Usage:
+        raise_http_error(400, ErrorCode.VALIDATION_GENERIC, "Custom detail")
+        raise_http_error(404, ErrorCode.NOT_FOUND_LOAN)
+    """
+    from fastapi import HTTPException
+
+    raise HTTPException(
+        status_code=status_code,
+        detail=get_error_response(code, detail),
+    )
+
+
+def raise_not_found(code: ErrorCode, detail: str | None = None) -> None:
+    """Raise 404 Not Found with standardized error."""
+    raise_http_error(404, code, detail)
+
+
+def raise_bad_request(code: ErrorCode, detail: str | None = None) -> None:
+    """Raise 400 Bad Request with standardized error."""
+    raise_http_error(400, code, detail)
+
+
+def raise_unauthorized(
+    code: ErrorCode = ErrorCode.AUTH_PERMISSION_DENIED, detail: str | None = None
+) -> None:
+    """Raise 401/403 Unauthorized with standardized error."""
+    raise_http_error(403, code, detail)
+
+
+def raise_validation_error(detail: str | None = None) -> None:
+    """Raise 422 Validation Error with standardized format for FastAPI."""
+    from fastapi import HTTPException
+
+    # FastAPI's default validation error format is different, so we use HTTPException directly
+    raise HTTPException(
+        status_code=422,
+        detail=[
+            {
+                "type": "value_error",
+                "msg": detail or "Validation error",
+                "loc": ["body"],
+            }
+        ],
+    )
