@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     # Environment
     environment: Literal["development", "production"] = "development"
     app_url: str = "http://localhost:3000"
+    enable_startup_seed: bool = False
 
     # Email
     smtp_email: str = "noreply@prestamos.local"

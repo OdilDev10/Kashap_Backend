@@ -9,8 +9,19 @@ from app.repositories.lender_repo import LenderRepository
 from app.repositories.email_verification_repo import EmailVerificationRepository
 from app.repositories.password_reset_repo import PasswordResetRepository
 from app.repositories.otp_repo import OTPRepository
-from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
-from app.core.exceptions import UnauthorizedException, ConflictException, ValidationException, NotFoundException
+from app.core.security import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+)
+from app.core.exceptions import (
+    UnauthorizedException,
+    ConflictException,
+    ValidationException,
+    NotFoundException,
+)
 from app.core.enums import AccountType, UserRole
 from app.core.permissions import get_permissions_for_role
 from app.services.email_service import email_service
@@ -53,7 +64,9 @@ class AuthService:
             "phone": user.phone,
         }
 
-    async def register(self, email: str, password: str, first_name: str, last_name: str) -> dict:
+    async def register(
+        self, email: str, password: str, first_name: str, last_name: str
+    ) -> dict:
         """Register new user with email verification."""
         email = email.lower().strip()
 
@@ -63,7 +76,9 @@ class AuthService:
 
         # Check if email already exists
         if await self.user_repo.email_exists(email):
-            raise ConflictException(f"Email {email} is already registered", code="EMAIL_ALREADY_EXISTS")
+            raise ConflictException(
+                f"Email {email} is already registered", code="EMAIL_ALREADY_EXISTS"
+            )
 
         # Create unverified user
         user = await self.user_repo.create_user(
@@ -79,11 +94,13 @@ class AuthService:
         token = str(uuid4())
         expires_at = datetime.utcnow() + timedelta(hours=24)
 
-        await self.email_verification_repo.create({
-            "user_id": user.id,
-            "token": token,
-            "expires_at": expires_at,
-        })
+        await self.email_verification_repo.create(
+            {
+                "user_id": user.id,
+                "token": token,
+                "expires_at": expires_at,
+            }
+        )
 
         # Send verification email
         await email_service.send_verification_email(email, token)
@@ -100,11 +117,15 @@ class AuthService:
         # Get verification record
         verification = await self.email_verification_repo.get_by_token(token)
         if not verification:
-            raise NotFoundException("Verification token is invalid or expired", code="INVALID_TOKEN")
+            raise NotFoundException(
+                "Verification token is invalid or expired", code="INVALID_TOKEN"
+            )
 
         # Check if expired
         if verification.expires_at < datetime.utcnow():
-            raise ValidationException("Verification token has expired", code="TOKEN_EXPIRED")
+            raise ValidationException(
+                "Verification token has expired", code="TOKEN_EXPIRED"
+            )
 
         # Check if already verified
         if verification.verified_at:
@@ -112,7 +133,9 @@ class AuthService:
 
         # Mark as verified
         verification.verified_at = datetime.utcnow()
-        await self.email_verification_repo.update(verification, {"verified_at": datetime.utcnow()})
+        await self.email_verification_repo.update(
+            verification, {"verified_at": datetime.utcnow()}
+        )
 
         # Activate user
         user = await self.user_repo.get_or_404(verification.user_id)
@@ -137,7 +160,10 @@ class AuthService:
 
         # Check if user is active
         if user.status != "active":
-            raise UnauthorizedException("User account is not active. Please verify your email.", code="USER_INACTIVE")
+            raise UnauthorizedException(
+                "User account is not active. Please verify your email.",
+                code="USER_INACTIVE",
+            )
 
         # Verify password
         if not verify_password(password, user.password_hash):
@@ -149,10 +175,12 @@ class AuthService:
         # Create tokens
         access_token = create_access_token(self._build_access_claims(user))
 
-        refresh_token = create_refresh_token({
-            "sub": str(user.id),
-            "type": "refresh",
-        })
+        refresh_token = create_refresh_token(
+            {
+                "sub": str(user.id),
+                "type": "refresh",
+            }
+        )
 
         await self.session.commit()
 
@@ -171,7 +199,9 @@ class AuthService:
                 "lender_id": str(user.lender_id) if user.lender_id else None,
                 "phone": user.phone,
                 "roles": [getattr(user.role, "value", user.role)],
-                "permissions": get_permissions_for_role(getattr(user.role, "value", user.role)),
+                "permissions": get_permissions_for_role(
+                    getattr(user.role, "value", user.role)
+                ),
             },
         }
 
@@ -214,11 +244,13 @@ class AuthService:
         token = str(uuid4())
         expires_at = datetime.utcnow() + timedelta(hours=1)
 
-        await self.password_reset_repo.create({
-            "user_id": user.id,
-            "token": token,
-            "expires_at": expires_at,
-        })
+        await self.password_reset_repo.create(
+            {
+                "user_id": user.id,
+                "token": token,
+                "expires_at": expires_at,
+            }
+        )
 
         # Send reset email
         await email_service.send_password_reset_email(email, token)
@@ -233,7 +265,9 @@ class AuthService:
         """Verify that reset token is valid."""
         reset = await self.password_reset_repo.get_by_token(token)
         if not reset:
-            raise NotFoundException("Reset token is invalid or expired", code="INVALID_TOKEN")
+            raise NotFoundException(
+                "Reset token is invalid or expired", code="INVALID_TOKEN"
+            )
 
         # Check if expired
         if reset.expires_at < datetime.utcnow():
@@ -257,7 +291,9 @@ class AuthService:
         # Get reset record
         reset = await self.password_reset_repo.get_by_token(token)
         if not reset:
-            raise NotFoundException("Reset token is invalid or expired", code="INVALID_TOKEN")
+            raise NotFoundException(
+                "Reset token is invalid or expired", code="INVALID_TOKEN"
+            )
 
         # Check if expired
         if reset.expires_at < datetime.utcnow():
@@ -269,7 +305,9 @@ class AuthService:
 
         # Get user and update password
         user = await self.user_repo.get_or_404(reset.user_id)
-        await self.user_repo.update(user, {"password_hash": hash_password(new_password)})
+        await self.user_repo.update(
+            user, {"password_hash": hash_password(new_password)}
+        )
 
         # Mark token as used
         await self.password_reset_repo.update(reset, {"used_at": datetime.utcnow()})
@@ -291,12 +329,14 @@ class AuthService:
         user = await self.user_repo.get_or_404(user_id)
 
         # Create OTP record
-        await self.otp_repo.create({
-            "user_id": user_id,
-            "code": otp_code,
-            "expires_at": expires_at,
-            "attempts": 0,
-        })
+        await self.otp_repo.create(
+            {
+                "user_id": user_id,
+                "code": otp_code,
+                "expires_at": expires_at,
+                "attempts": 0,
+            }
+        )
 
         # Send OTP email
         await email_service.send_otp_email(user.email, otp_code)
@@ -320,7 +360,9 @@ class AuthService:
 
         # Check if already verified
         if otp.verified_at:
-            raise ValidationException("OTP already verified", code="OTP_ALREADY_VERIFIED")
+            raise ValidationException(
+                "OTP already verified", code="OTP_ALREADY_VERIFIED"
+            )
 
         # Check if code matches
         if otp.code != otp_code.strip():
@@ -340,14 +382,18 @@ class AuthService:
             "message": "OTP verified successfully",
         }
 
-    async def change_password(self, user_id: str, current_password: str, new_password: str) -> dict:
+    async def change_password(
+        self, user_id: str, current_password: str, new_password: str
+    ) -> dict:
         """Change password for authenticated user."""
         # Validate passwords
         if len(new_password) < 8:
             raise ValidationException("New password must be at least 8 characters")
 
         if current_password == new_password:
-            raise ValidationException("New password must be different from current password")
+            raise ValidationException(
+                "New password must be different from current password"
+            )
 
         # Get user
         user = await self.user_repo.get_or_404(user_id)
@@ -357,7 +403,9 @@ class AuthService:
             raise UnauthorizedException("Current password is incorrect")
 
         # Update password
-        await self.user_repo.update(user, {"password_hash": hash_password(new_password)})
+        await self.user_repo.update(
+            user, {"password_hash": hash_password(new_password)}
+        )
 
         await self.session.commit()
 
@@ -405,26 +453,30 @@ class AuthService:
             )
 
         # Create customer record
-        customer = await self.customer_repo.create({
-            "lender_id": lender_id,
-            "first_name": first_name,
-            "last_name": last_name,
-            "email": email,
-            "phone": phone,
-            "document_type": document_type,
-            "document_number": document_number,
-            "status": "active",  # Customers start as active
-        })
+        customer = await self.customer_repo.create(
+            {
+                "lender_id": lender_id,
+                "first_name": first_name,
+                "last_name": last_name,
+                "email": email,
+                "phone": phone,
+                "document_type": document_type,
+                "document_number": document_number,
+                "status": "active",  # Customers start as active
+            }
+        )
 
         # Generate verification token for email
         token = str(uuid4())
         expires_at = datetime.utcnow() + timedelta(hours=24)
 
-        await self.email_verification_repo.create({
-            "user_id": None,  # We'll link to user if customer creates account
-            "token": token,
-            "expires_at": expires_at,
-        })
+        await self.email_verification_repo.create(
+            {
+                "user_id": None,  # We'll link to user if customer creates account
+                "token": token,
+                "expires_at": expires_at,
+            }
+        )
 
         # Send verification email
         await email_service.send_verification_email(email, token)
@@ -463,6 +515,18 @@ class AuthService:
         if lender_type not in ["financial", "individual"]:
             raise ValidationException("Lender type must be 'financial' or 'individual'")
 
+        # Validate document based on lender type
+        if lender_type == "individual":
+            if document_type.lower() != "cedula":
+                raise ValidationException(
+                    "Individual lenders must provide 'Cedula' as document type"
+                )
+        else:  # financial
+            if document_type.lower() not in ["rnc", "cedula"]:
+                raise ValidationException(
+                    "Financial lenders must provide 'RNC' or 'Cedula' as document type"
+                )
+
         # Check if lender already exists
         if await self.lender_repo.get_by_email(email):
             raise ConflictException(
@@ -477,23 +541,27 @@ class AuthService:
             )
 
         # Create lender
-        lender = await self.lender_repo.create({
-            "legal_name": legal_name,
-            "commercial_name": commercial_name or legal_name,
-            "lender_type": lender_type,
-            "document_type": document_type,
-            "document_number": document_number,
-            "email": email,
-            "phone": phone,
-            "status": "pending",  # Lenders start as pending
-        })
+        lender = await self.lender_repo.create(
+            {
+                "legal_name": legal_name,
+                "commercial_name": commercial_name or legal_name,
+                "lender_type": lender_type,
+                "document_type": document_type,
+                "document_number": document_number,
+                "email": email,
+                "phone": phone,
+                "status": "pending",  # Lenders start as pending
+            }
+        )
 
         # Create owner user for the lender
         owner_user = await self.user_repo.create_user(
             email=email,
             password_hash=hash_password(password),
             first_name=legal_name.split()[0],
-            last_name=" ".join(legal_name.split()[1:]) if len(legal_name.split()) > 1 else "Owner",
+            last_name=" ".join(legal_name.split()[1:])
+            if len(legal_name.split()) > 1
+            else "Owner",
             role=UserRole.OWNER,
             account_type=AccountType.LENDER,
             lender_id=lender.id,
@@ -503,11 +571,13 @@ class AuthService:
         token = str(uuid4())
         expires_at = datetime.utcnow() + timedelta(hours=24)
 
-        await self.email_verification_repo.create({
-            "user_id": owner_user.id,
-            "token": token,
-            "expires_at": expires_at,
-        })
+        await self.email_verification_repo.create(
+            {
+                "user_id": owner_user.id,
+                "token": token,
+                "expires_at": expires_at,
+            }
+        )
 
         await email_service.send_verification_email(email, token)
 

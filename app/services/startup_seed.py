@@ -37,7 +37,7 @@ SEED_USERS = [
         "account_type": AccountType.INTERNAL,
         "role": UserRole.PLATFORM_ADMIN,
         "status": UserStatus.ACTIVE,
-        "use_seed_lender": True,
+        "use_seed_lender": False,
     },
     {
         "email": "lender@opticredit.app",

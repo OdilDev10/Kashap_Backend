@@ -16,6 +16,7 @@ from app.core.enums import CustomerStatus
 if TYPE_CHECKING:
     from app.models.lender import Lender
     from app.models.user import User
+    from app.models.customer_lender_link import CustomerLenderLink
 
 
 class Customer(Base, BaseModel):
@@ -52,6 +53,10 @@ class Customer(Base, BaseModel):
     # Relationships
     lender: Mapped["Lender"] = relationship(back_populates="customers")
     user: Mapped[Optional["User"]] = relationship(back_populates="customer_profile")
+    lender_links: Mapped[list["CustomerLenderLink"]] = relationship(
+        back_populates="customer",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:
         return f"<Customer {self.first_name} {self.last_name}>"

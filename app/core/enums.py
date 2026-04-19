@@ -3,12 +3,14 @@ from enum import Enum
 
 class LenderType(str, Enum):
     """Tipo de prestamista."""
+
     FINANCIAL = "financial"
     INDIVIDUAL = "individual"
 
 
 class LenderStatus(str, Enum):
     """Estado del prestamista en la plataforma."""
+
     PENDING = "pending"
     ACTIVE = "active"
     SUSPENDED = "suspended"
@@ -17,6 +19,7 @@ class LenderStatus(str, Enum):
 
 class UserRole(str, Enum):
     """Rol de usuario del sistema."""
+
     PLATFORM_ADMIN = "platform_admin"
     OWNER = "owner"
     MANAGER = "manager"
@@ -27,6 +30,7 @@ class UserRole(str, Enum):
 
 class UserStatus(str, Enum):
     """Estado del usuario."""
+
     ACTIVE = "active"
     INACTIVE = "inactive"
     BLOCKED = "blocked"
@@ -34,6 +38,7 @@ class UserStatus(str, Enum):
 
 class AccountType(str, Enum):
     """Tipo de cuenta principal del usuario."""
+
     INTERNAL = "internal"
     CUSTOMER = "customer"
     LENDER = "lender"
@@ -41,6 +46,7 @@ class AccountType(str, Enum):
 
 class CustomerStatus(str, Enum):
     """Estado del cliente."""
+
     PENDING = "pending"
     ACTIVE = "active"
     BLOCKED = "blocked"
@@ -48,6 +54,7 @@ class CustomerStatus(str, Enum):
 
 class LinkStatus(str, Enum):
     """Estado de la vinculación cliente-prestamista."""
+
     PENDING = "pending"
     LINKED = "linked"
     UNLINKED = "unlinked"
@@ -55,6 +62,7 @@ class LinkStatus(str, Enum):
 
 class DocumentKind(str, Enum):
     """Tipo de documento de identidad."""
+
     ID_FRONT = "id_front"
     ID_BACK = "id_back"
     SELFIE = "selfie"
@@ -62,8 +70,21 @@ class DocumentKind(str, Enum):
     OTHER = "other"
 
 
+class DocumentType(str, Enum):
+    """Tipo de documento subido por cliente (identificación y estados financieros)."""
+
+    CEDULA_FRONT = "cedula_front"
+    CEDULA_BACK = "cedula_back"
+    PASSPORT = "passport"
+    FINANCIAL_STATEMENT = "financial_statement"
+    BANK_STATEMENT = "bank_statement"
+    INCOME_PROOF = "income_proof"
+    OTHER = "other"
+
+
 class DocumentStatus(str, Enum):
     """Estado de validación de documento."""
+
     PENDING = "pending"
     VALIDATED = "validated"
     REJECTED = "rejected"
@@ -71,6 +92,7 @@ class DocumentStatus(str, Enum):
 
 class LoanApplicationStatus(str, Enum):
     """Estado de solicitud de préstamo."""
+
     SUBMITTED = "submitted"
     UNDER_REVIEW = "under_review"
     APPROVED = "approved"
@@ -80,6 +102,7 @@ class LoanApplicationStatus(str, Enum):
 
 class LoanStatus(str, Enum):
     """Estado del préstamo."""
+
     APPROVED = "approved"
     DISBURSED = "disbursed"
     ACTIVE = "active"
@@ -90,6 +113,7 @@ class LoanStatus(str, Enum):
 
 class InstallmentStatus(str, Enum):
     """Estado de la cuota."""
+
     PENDING = "pending"
     UNDER_REVIEW = "under_review"
     PAID = "paid"
@@ -100,6 +124,7 @@ class InstallmentStatus(str, Enum):
 
 class DisbursementMethod(str, Enum):
     """Método de desembolso."""
+
     BANK_TRANSFER = "bank_transfer"
     CASH = "cash"
     OTHER = "other"
@@ -107,6 +132,7 @@ class DisbursementMethod(str, Enum):
 
 class PaymentStatus(str, Enum):
     """Estado del pago."""
+
     SUBMITTED = "submitted"
     UNDER_REVIEW = "under_review"
     APPROVED = "approved"
@@ -115,12 +141,14 @@ class PaymentStatus(str, Enum):
 
 class PaymentSource(str, Enum):
     """Origen del pago."""
+
     CUSTOMER_PORTAL = "customer_portal"
     MANUAL_BACKOFFICE = "manual_backoffice"
 
 
 class VoucherStatus(str, Enum):
     """Estado del comprobante."""
+
     UPLOADED = "uploaded"
     PROCESSED = "processed"
     FAILED = "failed"
@@ -128,6 +156,7 @@ class VoucherStatus(str, Enum):
 
 class OcrStatus(str, Enum):
     """Estado del resultado OCR."""
+
     SUCCESS = "success"
     PARTIAL = "partial"
     FAILED = "failed"
@@ -135,6 +164,7 @@ class OcrStatus(str, Enum):
 
 class MatchStatus(str, Enum):
     """Estado de coincidencia de pago."""
+
     MATCHED = "matched"
     MISMATCH = "mismatch"
     NEEDS_REVIEW = "needs_review"
@@ -142,6 +172,7 @@ class MatchStatus(str, Enum):
 
 class SubscriptionStatus(str, Enum):
     """Estado de suscripción."""
+
     TRIAL = "trial"
     ACTIVE = "active"
     PAST_DUE = "past_due"
@@ -150,6 +181,7 @@ class SubscriptionStatus(str, Enum):
 
 class InvoiceStatus(str, Enum):
     """Estado de factura de suscripción."""
+
     PENDING = "pending"
     PAID = "paid"
     VOID = "void"
@@ -157,6 +189,7 @@ class InvoiceStatus(str, Enum):
 
 class NotificationChannel(str, Enum):
     """Canal de notificación."""
+
     EMAIL = "email"
     SMS = "sms"
     PUSH = "push"
@@ -165,6 +198,7 @@ class NotificationChannel(str, Enum):
 
 class NotificationStatus(str, Enum):
     """Estado de notificación."""
+
     QUEUED = "queued"
     SENT = "sent"
     FAILED = "failed"
@@ -173,6 +207,7 @@ class NotificationStatus(str, Enum):
 
 class AuditAction(str, Enum):
     """Acción registrada en audit log."""
+
     CREATE = "create"
     UPDATE = "update"
     APPROVE = "approve"
@@ -184,6 +219,7 @@ class AuditAction(str, Enum):
 
 class LogLevel(str, Enum):
     """Nivel de log del sistema."""
+
     INFO = "info"
     WARN = "warn"
     ERROR = "error"

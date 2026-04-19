@@ -10,6 +10,7 @@ from app.models.loan import Loan, LoanStatus, Installment, InstallmentStatus
 from app.models.payment import Payment, PaymentStatus, Voucher
 from app.models.customer import Customer
 from app.models.user import User
+from app.core.enums import UserRole
 from app.repositories.customer_repo import CustomerRepository
 from app.repositories.loan_repo import LoanRepository, InstallmentRepository
 from app.repositories.payment_repo import PaymentRepository
@@ -598,3 +599,60 @@ class DashboardService:
             "rejected_count": rejected,
             "total_this_month": float(total_this_month) if total_this_month else 0.0,
         }
+
+    # === Users with pagination + search ===
+    async def list_users(
+        self,
+        lender_id: str,
+        search: str | None = None,
+        skip: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[dict], int]:
+        """List users for lender with pagination and search."""
+        allowed_roles = [UserRole.OWNER, UserRole.MANAGER, UserRole.REVIEWER, UserRole.AGENT]
+        query = select(User).where(
+            User.lender_id == lender_id,
+            User.role.in_(allowed_roles),
+        )
+        count_query = select(func.count(User.id)).where(
+            User.lender_id == lender_id,
+            User.role.in_(allowed_roles),
+        )
+
+        if search:
+            search_filter = or_(
+                User.first_name.ilike(f"%{search}%"),
+                User.last_name.ilike(f"%{search}%"),
+                User.email.ilike(f"%{search}%"),
+            )
+            query = query.where(search_filter)
+            count_query = count_query.where(search_filter)
+
+        # Total count
+        total_result = await self.session.execute(count_query)
+        total = total_result.scalar() or 0
+
+        # Paginated results
+        query = query.order_by(desc(User.created_at)).offset(skip).limit(limit)
+        result = await self.session.execute(query)
+        users = result.scalars().all()
+
+        items = []
+        for user in users:
+            items.append(
+                {
+                    "id": str(user.id),
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "email": user.email,
+                    "role": user.role.value
+                    if hasattr(user.role, "value")
+                    else user.role,
+                    "status": user.status.value
+                    if hasattr(user.status, "value")
+                    else user.status,
+                    "created_at": user.created_at,
+                }
+            )
+
+        return items, total

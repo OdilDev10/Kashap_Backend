@@ -24,7 +24,8 @@ async def lifespan(_: FastAPI):
     """Initialize and close shared application resources."""
     # Initialize database
     await init_db()
-    await run_startup_seed()
+    if settings.enable_startup_seed:
+        await run_startup_seed()
 
     # Initialize OCR engine if enabled
     if settings.ocr_enabled:

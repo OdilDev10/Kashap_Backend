@@ -12,6 +12,7 @@ from app.schemas.dashboard import (
     PaginatedLoansResponse,
     PaginatedCustomersResponse,
     PaginatedPaymentsResponse,
+    PaginatedUsersResponse,
     LoanKPIs,
     PaymentKPIs,
 )
@@ -90,7 +91,9 @@ async def list_lender_payments(
     search: str | None = Query(default=None),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
-    current_user: User = Depends(require_roles("platform_admin", "owner", "manager", "reviewer")),
+    current_user: User = Depends(
+        require_roles("platform_admin", "owner", "manager", "reviewer")
+    ),
     lender_id: str = Depends(get_lender_context),
     session: AsyncSession = Depends(get_db),
 ) -> PaginatedPaymentsResponse:
@@ -102,7 +105,9 @@ async def list_lender_payments(
 
 @router.get("/payments/kpis")
 async def get_payment_kpis(
-    current_user: User = Depends(require_roles("platform_admin", "owner", "manager", "reviewer")),
+    current_user: User = Depends(
+        require_roles("platform_admin", "owner", "manager", "reviewer")
+    ),
     lender_id: str = Depends(get_lender_context),
     session: AsyncSession = Depends(get_db),
 ) -> PaymentKPIs:
@@ -110,3 +115,20 @@ async def get_payment_kpis(
     service = DashboardService(session)
     data = await service.get_payment_kpis(lender_id)
     return PaymentKPIs(**data)
+
+
+@router.get("/users")
+async def list_lender_users(
+    search: str | None = Query(default=None),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(
+        require_roles("platform_admin", "owner", "manager", "reviewer", "agent")
+    ),
+    lender_id: str = Depends(get_lender_context),
+    session: AsyncSession = Depends(get_db),
+) -> PaginatedUsersResponse:
+    """List users for lender with pagination and search."""
+    service = DashboardService(session)
+    items, total = await service.list_users(lender_id, search, skip, limit)
+    return PaginatedUsersResponse(items=items, total=total, skip=skip, limit=limit)

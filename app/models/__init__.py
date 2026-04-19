@@ -4,12 +4,15 @@ from app.models.base_model import BaseModel
 from app.models.lender import Lender, LenderInvitation, LenderBankAccount
 from app.models.user import User
 from app.models.customer import Customer
+from app.models.customer_lender_link import CustomerLenderLink
 from app.models.auth import EmailVerification, PasswordReset, OTP
 from app.models.loan_application import LoanApplication
 from app.models.loan import Loan, Disbursement, Installment
 from app.models.payment import Payment, Voucher, OcrResult, PaymentMatch
 from app.models.subscription import Subscription, SubscriptionInvoice
 from app.models.notification import Notification
+from app.models.customer_document import CustomerDocument
+from app.models.client_bank_account import ClientBankAccount
 
 __all__ = [
     "BaseModel",
@@ -18,6 +21,7 @@ __all__ = [
     "LenderBankAccount",
     "User",
     "Customer",
+    "CustomerLenderLink",
     "EmailVerification",
     "PasswordReset",
     "OTP",
@@ -32,4 +36,6 @@ __all__ = [
     "Subscription",
     "SubscriptionInvoice",
     "Notification",
+    "CustomerDocument",
+    "ClientBankAccount",
 ]
