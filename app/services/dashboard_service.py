@@ -205,7 +205,9 @@ class DashboardService:
             }
 
         on_time = sum(1 for l in loans if l.status == LoanStatus.ACTIVE)
-        delayed = sum(1 for l in loans if l.status == LoanStatus.PENDING)
+        delayed = sum(
+            1 for l in loans if l.status in (LoanStatus.APPROVED, LoanStatus.DISBURSED)
+        )
         overdue = sum(1 for l in loans if l.status == LoanStatus.OVERDUE)
 
         return {
@@ -293,6 +295,24 @@ class DashboardService:
         days = hours // 24
         return f"Hace {days} días"
 
+    def _normalize_loan_status(self, status: str | None) -> LoanStatus | None:
+        """Map UI aliases to canonical LoanStatus values."""
+        if not status:
+            return None
+
+        normalized = status.strip().lower()
+        aliases: dict[str, LoanStatus] = {
+            "pending": LoanStatus.APPROVED,
+            "approved": LoanStatus.APPROVED,
+            "disbursed": LoanStatus.DISBURSED,
+            "in_progress": LoanStatus.ACTIVE,
+            "active": LoanStatus.ACTIVE,
+            "overdue": LoanStatus.OVERDUE,
+            "completed": LoanStatus.COMPLETED,
+            "cancelled": LoanStatus.CANCELLED,
+        }
+        return aliases.get(normalized)
+
     # === Loans with pagination + search ===
     async def list_loans(
         self,
@@ -313,9 +333,10 @@ class DashboardService:
             query = query.where(search_filter)
             count_query = count_query.where(search_filter)
 
-        if status:
-            query = query.where(Loan.status == status)
-            count_query = count_query.where(Loan.status == status)
+        status_enum = self._normalize_loan_status(status)
+        if status and status_enum is not None:
+            query = query.where(Loan.status == status_enum)
+            count_query = count_query.where(Loan.status == status_enum)
 
         # Total count
         total_result = await self.session.execute(count_query)
@@ -388,7 +409,7 @@ class DashboardService:
         result = await self.session.execute(
             select(func.count(Loan.id)).where(
                 Loan.lender_id == lender_id,
-                Loan.status == LoanStatus.PENDING,
+                Loan.status == LoanStatus.APPROVED,
             )
         )
         pending = result.scalar() or 0

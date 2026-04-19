@@ -24,7 +24,7 @@ router = APIRouter(prefix="/lender", tags=["lender"])
 @router.get("/dashboard", response_model=LenderDashboardResponse)
 async def get_lender_dashboard(
     current_user: User = Depends(
-        require_roles("owner", "manager", "reviewer", "agent")
+        require_roles("platform_admin", "owner", "manager", "reviewer", "agent")
     ),
     lender_id: str = Depends(get_lender_context),
     session: AsyncSession = Depends(get_db),
@@ -42,7 +42,7 @@ async def list_lender_loans(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
     current_user: User = Depends(
-        require_roles("owner", "manager", "reviewer", "agent")
+        require_roles("platform_admin", "owner", "manager", "reviewer", "agent")
     ),
     lender_id: str = Depends(get_lender_context),
     session: AsyncSession = Depends(get_db),
@@ -56,7 +56,7 @@ async def list_lender_loans(
 @router.get("/loans/kpis")
 async def get_loan_kpis(
     current_user: User = Depends(
-        require_roles("owner", "manager", "reviewer", "agent")
+        require_roles("platform_admin", "owner", "manager", "reviewer", "agent")
     ),
     lender_id: str = Depends(get_lender_context),
     session: AsyncSession = Depends(get_db),
@@ -74,7 +74,7 @@ async def list_lender_customers(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
     current_user: User = Depends(
-        require_roles("owner", "manager", "reviewer", "agent")
+        require_roles("platform_admin", "owner", "manager", "reviewer", "agent")
     ),
     lender_id: str = Depends(get_lender_context),
     session: AsyncSession = Depends(get_db),
@@ -90,7 +90,7 @@ async def list_lender_payments(
     search: str | None = Query(default=None),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
-    current_user: User = Depends(require_roles("owner", "manager", "reviewer")),
+    current_user: User = Depends(require_roles("platform_admin", "owner", "manager", "reviewer")),
     lender_id: str = Depends(get_lender_context),
     session: AsyncSession = Depends(get_db),
 ) -> PaginatedPaymentsResponse:
@@ -102,7 +102,7 @@ async def list_lender_payments(
 
 @router.get("/payments/kpis")
 async def get_payment_kpis(
-    current_user: User = Depends(require_roles("owner", "manager", "reviewer")),
+    current_user: User = Depends(require_roles("platform_admin", "owner", "manager", "reviewer")),
     lender_id: str = Depends(get_lender_context),
     session: AsyncSession = Depends(get_db),
 ) -> PaymentKPIs:

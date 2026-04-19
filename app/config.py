@@ -1,6 +1,8 @@
 import os
+import json
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -59,7 +61,36 @@ class Settings(BaseSettings):
     api_description: str = "Kashap SaaS para gestión de préstamos con validación OCR"
 
     # CORS
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8080"]
+    cors_origins: list[str] = [
+        "http://localhost:4321",
+        "http://127.0.0.1:4321",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+    ]
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _parse_cors_origins(cls, value):
+        """Accept JSON array or comma-separated CORS origins from env vars."""
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return []
+            if raw.startswith("["):
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, list):
+                        return parsed
+                except json.JSONDecodeError:
+                    pass
+            return [item.strip() for item in raw.split(",") if item.strip()]
+        return value
 
 
 # Global settings instance

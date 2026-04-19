@@ -12,6 +12,7 @@ from app.repositories.otp_repo import OTPRepository
 from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
 from app.core.exceptions import UnauthorizedException, ConflictException, ValidationException, NotFoundException
 from app.core.enums import AccountType, UserRole
+from app.core.permissions import get_permissions_for_role
 from app.services.email_service import email_service
 from app.config import settings
 import random
@@ -29,6 +30,28 @@ class AuthService:
         self.email_verification_repo = EmailVerificationRepository(session)
         self.password_reset_repo = PasswordResetRepository(session)
         self.otp_repo = OTPRepository(session)
+
+    @staticmethod
+    def _build_access_claims(user) -> dict:
+        """Build rich access-token claims for frontend authorization."""
+        role_value = getattr(user.role, "value", user.role)
+        account_type_value = getattr(user.account_type, "value", user.account_type)
+        status_value = getattr(user.status, "value", user.status)
+        permissions = get_permissions_for_role(role_value)
+
+        return {
+            "sub": str(user.id),
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "role": role_value,
+            "roles": [role_value],
+            "permissions": permissions,
+            "account_type": account_type_value,
+            "status": status_value,
+            "lender_id": str(user.lender_id) if user.lender_id else None,
+            "phone": user.phone,
+        }
 
     async def register(self, email: str, password: str, first_name: str, last_name: str) -> dict:
         """Register new user with email verification."""
@@ -124,11 +147,7 @@ class AuthService:
         await self.user_repo.update(user, {"last_login_at": datetime.utcnow()})
 
         # Create tokens
-        access_token = create_access_token({
-            "sub": str(user.id),
-            "role": user.role,
-            "lender_id": str(user.lender_id) if user.lender_id else None,
-        })
+        access_token = create_access_token(self._build_access_claims(user))
 
         refresh_token = create_refresh_token({
             "sub": str(user.id),
@@ -146,8 +165,13 @@ class AuthService:
                 "email": user.email,
                 "first_name": user.first_name,
                 "last_name": user.last_name,
-                "role": user.role,
-                "account_type": user.account_type,
+                "role": getattr(user.role, "value", user.role),
+                "account_type": getattr(user.account_type, "value", user.account_type),
+                "status": getattr(user.status, "value", user.status),
+                "lender_id": str(user.lender_id) if user.lender_id else None,
+                "phone": user.phone,
+                "roles": [getattr(user.role, "value", user.role)],
+                "permissions": get_permissions_for_role(getattr(user.role, "value", user.role)),
             },
         }
 
@@ -167,11 +191,7 @@ class AuthService:
         user = await self.user_repo.get_or_404(user_id)
 
         # Create new access token
-        access_token = create_access_token({
-            "sub": str(user.id),
-            "role": user.role,
-            "lender_id": str(user.lender_id) if user.lender_id else None,
-        })
+        access_token = create_access_token(self._build_access_claims(user))
 
         return {
             "access_token": access_token,

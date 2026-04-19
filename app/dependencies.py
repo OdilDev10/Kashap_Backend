@@ -36,6 +36,23 @@ async def get_current_user(
     return user
 
 
+async def get_current_claims(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> dict:
+    """Return validated access-token claims without DB lookup."""
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise UnauthorizedException("Authentication credentials were not provided")
+
+    payload = decode_token(credentials.credentials)
+    if payload.get("type") != "access":
+        raise UnauthorizedException("Invalid access token")
+
+    if not payload.get("sub"):
+        raise UnauthorizedException("Token subject is missing")
+
+    return payload
+
+
 async def get_lender_context(current_user: User = Depends(get_current_user)) -> str:
     """Return the authenticated lender context when available."""
     if current_user.lender_id is None:

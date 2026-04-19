@@ -37,9 +37,27 @@ async def get_current_customer(
     session: AsyncSession = Depends(get_db),
 ) -> Customer:
     """Get the Customer profile for the authenticated user."""
-    if not current_user.customer_profile:
+    repo = CustomerRepository(session)
+
+    # Customer portal is only valid for customer users.
+    role_value = getattr(current_user.role, "value", current_user.role)
+    if role_value != "customer":
+        raise ForbiddenException("Customer account required")
+
+    customer = await repo.get_by_user_id(current_user.id)
+    if customer:
+        return customer
+
+    # Backward compatibility: old customer records may exist without user_id link.
+    customer = await repo.get_by_email_and_lender(current_user.email, current_user.lender_id)
+    if not customer:
         raise NotFoundException("No customer profile found for this user")
-    return current_user.customer_profile
+
+    if customer.user_id is None:
+        await repo.update(customer, {"user_id": current_user.id})
+        await session.commit()
+
+    return customer
 
 
 @router.post("/payments")

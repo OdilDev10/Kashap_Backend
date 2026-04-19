@@ -131,6 +131,8 @@ class UserResponse(BaseModel):
     lender_id: str | None = None
     phone: str | None = None
     last_login_at: datetime | None = None
+    roles: list[str] = []
+    permissions: list[str] = []
 
 
 class AppConfigResponse(BaseModel):

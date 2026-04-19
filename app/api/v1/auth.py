@@ -13,7 +13,7 @@ from app.schemas.auth import (
 )
 from app.schemas.common import MessageResponse
 from app.services.auth_service import AuthService
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_claims
 from app.models.user import User
 
 
@@ -121,20 +121,21 @@ async def logout(
 
 @router.get("/me", response_model=UserResponse)
 async def get_me(
-    current_user: User = Depends(get_current_user),
+    claims: dict = Depends(get_current_claims),
 ) -> UserResponse:
-    """Return the authenticated user profile."""
+    """Return the authenticated user profile from JWT claims (no DB hit)."""
     return UserResponse(
-        id=str(current_user.id),
-        email=current_user.email,
-        first_name=current_user.first_name,
-        last_name=current_user.last_name,
-        role=getattr(current_user.role, "value", current_user.role),
-        account_type=getattr(current_user.account_type, "value", current_user.account_type),
-        status=getattr(current_user.status, "value", current_user.status),
-        lender_id=str(current_user.lender_id) if current_user.lender_id else None,
-        phone=current_user.phone,
-        last_login_at=current_user.last_login_at,
+        id=str(claims.get("sub", "")),
+        email=str(claims.get("email", "")),
+        first_name=str(claims.get("first_name", "")),
+        last_name=str(claims.get("last_name", "")),
+        role=str(claims.get("role", "")),
+        account_type=claims.get("account_type"),
+        status=claims.get("status"),
+        lender_id=claims.get("lender_id"),
+        phone=claims.get("phone"),
+        roles=claims.get("roles") or [],
+        permissions=claims.get("permissions") or [],
     )
 
 

@@ -1,40 +1,66 @@
-# Kashap Backend
+# OptiCredit Backend
 
-## Desarrollo (uv + logs + OCR obligatorio)
+Backend FastAPI para OptiCredit.
 
-Ejecuta desde `backend/`:
+## Arranque rápido
+
+Desde `backend/`:
 
 ```powershell
-.\scripts\dev.ps1
+uv sync --dev
+python main.py
 ```
 
-El script hace:
-1. valida que el puerto `8000` esté libre,
-2. sincroniza dependencias con `uv sync --dev`,
-3. ejecuta preflight OCR obligatorio (`paddle`, `paddleocr`, `chardet`),
-4. arranca FastAPI con logs detallados:
-   `uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --access-log --log-level debug`.
+Opcional con flags:
 
-## Verificación rápida
+```powershell
+python main.py --host 0.0.0.0 --port 8000 --reload --access-log --log-level debug
+```
 
-En otra terminal:
+Healthcheck:
 
 ```powershell
 curl http://127.0.0.1:8000/health
 ```
 
-Debe responder `{"status":"ok"}` y en la consola del backend verás los logs de access + middleware HTTP.
+## Seed automático al iniciar
 
-## Credenciales de seed
+Cada vez que arranca el servidor se ejecuta un seed idempotente (`app/services/startup_seed.py`):
+
+- crea/actualiza financiera demo `lender@opticredit.app`
+- crea/actualiza usuarios de prueba
+- si ya existen, los actualiza sin duplicar registros
+
+### Credenciales de prueba
+
+Todos usan la misma contraseña:
 
 ```text
-admin@microcred.com / Admin@12345
-gerente@microcred.com / Gerente@12345
-agente@microcred.com / Agente@12345
+Test@1234
 ```
 
-Si faltan datos de prueba:
+Usuarios:
 
-```powershell
-uv run python seed.py
-```
+- `odil.martinez@opticredit.app` -> `platform_admin` (también vinculado a lender demo)
+- `lender@opticredit.app` -> `owner` (panel prestamista)
+- `cliente@opticredit.app` -> `customer` (panel cliente)
+
+## JWT, roles y permisos
+
+El `access_token` incluye claims de autorización para evitar consultas extra en frontend:
+
+- `role`
+- `roles`
+- `permissions`
+- `account_type`
+- `status`
+- `lender_id`
+- `email`, `first_name`, `last_name`, `phone`
+
+`GET /api/v1/auth/me` responde desde claims del JWT (sin query a DB).
+
+## Notas de autorización
+
+- Endpoints `/api/v1/lender/*` aceptan roles: `platform_admin`, `owner`, `manager`, `reviewer`, `agent`.
+- Endpoints `/api/v1/admin/*` aceptan `platform_admin`.
+- Endpoints `/api/v1/me/*` son portal cliente autenticado.

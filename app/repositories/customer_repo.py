@@ -27,11 +27,29 @@ class CustomerRepository(BaseRepository[Customer]):
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_email_and_lender(
+        self,
+        email: str,
+        lender_id: UUID | None,
+    ) -> Customer | None:
+        """Get customer by email and lender context."""
+        stmt = select(Customer).where(Customer.email == email.lower().strip())
+        if lender_id is not None:
+            stmt = stmt.where(Customer.lender_id == lender_id)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_by_lender(self, lender_id: UUID) -> list[Customer]:
         """Get all customers for a lender."""
         stmt = select(Customer).where(Customer.lender_id == lender_id)
         result = await self.session.execute(stmt)
         return result.scalars().all()
+
+    async def get_by_user_id(self, user_id: UUID) -> Customer | None:
+        """Get customer profile by linked user id."""
+        stmt = select(Customer).where(Customer.user_id == user_id)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def email_exists(self, email: str) -> bool:
         """Check if email already exists."""
