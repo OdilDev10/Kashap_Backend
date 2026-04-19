@@ -1,10 +1,13 @@
-"""Idempotent startup seed for essential development accounts."""
+"""Idempotent startup seed for rich development demo data."""
 
 from __future__ import annotations
 
 import logging
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
+from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 
 # Ensure all ORM models are registered before querying.
 from app.db import base as _base  # noqa: F401
@@ -14,145 +17,710 @@ from app.core.enums import (
     CustomerStatus,
     LenderStatus,
     LenderType,
+    LinkStatus,
     UserRole,
     UserStatus,
 )
 from app.core.security import hash_password
+from app.core.utils import generate_installment_schedule
+from app.models.client_bank_account import ClientBankAccount
 from app.models.customer import Customer
-from app.models.lender import Lender
+from app.models.customer_lender_link import CustomerLenderLink
+from app.models.lender import Lender, LenderBankAccount
+from app.models.loan import (
+    Disbursement,
+    DisbursementStatus,
+    Installment,
+    InstallmentStatus,
+    Loan,
+    LoanStatus,
+)
+from app.models.loan_application import LoanApplication, LoanApplicationStatus
+from app.models.payment import OcrResult, OcrStatus, Payment, PaymentMethod, PaymentSource, PaymentStatus, Voucher, VoucherStatus
 from app.models.user import User
 
 logger = logging.getLogger("app.seed")
 logger.setLevel(logging.INFO)
 
 TEST_USER_PASSWORD = "Test@1234"
-SEED_LENDER_EMAIL = "lender@opticredit.app"
-SEED_LENDER_DOCUMENT = "40200000001"
 
-SEED_USERS = [
+SEED_LENDERS: dict[str, dict[str, Any]] = {
+    "opticredit": {
+        "legal_name": "OptiCredit Demo SRL",
+        "commercial_name": "OptiCredit Demo",
+        "lender_type": LenderType.FINANCIAL,
+        "document_type": "RNC",
+        "document_number": "40200000001",
+        "email": "lender@opticredit.app",
+        "phone": "8090000000",
+        "status": LenderStatus.ACTIVE,
+        "subscription_plan": "professional",
+    },
+    "microcred": {
+        "legal_name": "MicroFinanciera Dominica SRL",
+        "commercial_name": "MicroCred",
+        "lender_type": LenderType.FINANCIAL,
+        "document_type": "RNC",
+        "document_number": "40200000002",
+        "email": "admin@microcred.com",
+        "phone": "8095550100",
+        "status": LenderStatus.ACTIVE,
+        "subscription_plan": "basic",
+    },
+}
+
+SEED_USERS: list[dict[str, Any]] = [
     {
         "email": "odil.martinez@opticredit.app",
         "first_name": "Odil",
         "last_name": "Martinez",
+        "phone": "8091111111",
         "account_type": AccountType.INTERNAL,
         "role": UserRole.PLATFORM_ADMIN,
         "status": UserStatus.ACTIVE,
-        "use_seed_lender": False,
+        "lender_key": None,
     },
     {
         "email": "lender@opticredit.app",
         "first_name": "Lender",
         "last_name": "Demo",
+        "phone": "8090000000",
         "account_type": AccountType.LENDER,
         "role": UserRole.OWNER,
         "status": UserStatus.ACTIVE,
-        "use_seed_lender": True,
+        "lender_key": "opticredit",
+    },
+    {
+        "email": "manager@opticredit.app",
+        "first_name": "Paola",
+        "last_name": "Mejia",
+        "phone": "8090000001",
+        "account_type": AccountType.INTERNAL,
+        "role": UserRole.MANAGER,
+        "status": UserStatus.ACTIVE,
+        "lender_key": "opticredit",
+    },
+    {
+        "email": "reviewer@opticredit.app",
+        "first_name": "Laura",
+        "last_name": "Nunez",
+        "phone": "8090000002",
+        "account_type": AccountType.INTERNAL,
+        "role": UserRole.REVIEWER,
+        "status": UserStatus.ACTIVE,
+        "lender_key": "opticredit",
+    },
+    {
+        "email": "admin@microcred.com",
+        "first_name": "Carlos",
+        "last_name": "Rodriguez",
+        "phone": "8095550100",
+        "account_type": AccountType.LENDER,
+        "role": UserRole.OWNER,
+        "status": UserStatus.ACTIVE,
+        "lender_key": "microcred",
     },
     {
         "email": "cliente@opticredit.app",
         "first_name": "Cliente",
         "last_name": "Demo",
+        "phone": "8092222222",
         "account_type": AccountType.CUSTOMER,
         "role": UserRole.CUSTOMER,
         "status": UserStatus.ACTIVE,
-        "use_seed_lender": False,
+        "lender_key": None,
+    },
+]
+
+CUSTOMER_ASSOCIATIONS = ["opticredit", "microcred"]
+
+LENDER_ACCOUNTS: dict[str, list[dict[str, Any]]] = {
+    "opticredit": [
+        {
+            "bank_name": "Banco Popular Dominicano",
+            "account_type": "checking",
+            "account_number_masked": "*********1204",
+            "account_holder_name": "OptiCredit Demo SRL",
+            "currency": "DOP",
+            "is_primary": True,
+            "status": "active",
+        },
+        {
+            "bank_name": "Banco BHD",
+            "account_type": "savings",
+            "account_number_masked": "*********4458",
+            "account_holder_name": "OptiCredit Demo SRL",
+            "currency": "DOP",
+            "is_primary": False,
+            "status": "active",
+        },
+    ],
+    "microcred": [
+        {
+            "bank_name": "Banreservas",
+            "account_type": "checking",
+            "account_number_masked": "*********8831",
+            "account_holder_name": "MicroFinanciera Dominica SRL",
+            "currency": "DOP",
+            "is_primary": True,
+            "status": "active",
+        }
+    ],
+}
+
+CLIENT_ACCOUNTS = [
+    {
+        "bank_name": "Banco Popular Dominicano",
+        "account_type": "savings",
+        "account_number_masked": "*********9922",
+        "account_holder_name": "Cliente Demo",
+        "currency": "DOP",
+        "is_primary": True,
+        "status": "active",
+        "balance": Decimal("2400.00"),
+    },
+    {
+        "bank_name": "Banco BHD",
+        "account_type": "checking",
+        "account_number_masked": "*********7710",
+        "account_holder_name": "Cliente Demo",
+        "currency": "DOP",
+        "is_primary": False,
+        "status": "active",
+        "balance": Decimal("0.00"),
+    },
+]
+
+SEED_LOANS = [
+    {
+        "code": "OPTI-ACT-001",
+        "lender_key": "opticredit",
+        "principal": Decimal("250000.00"),
+        "annual_rate": Decimal("22.00"),
+        "installments_count": 12,
+        "frequency": "monthly",
+        "first_due_offset_days": -60,
+        "disbursement_offset_days": 95,
+        "status": LoanStatus.ACTIVE,
+        "paid_installments": {1: Decimal("25458.33")},
+        "partial_installments": {2: Decimal("12000.00")},
+    },
+    {
+        "code": "OPTI-OVD-002",
+        "lender_key": "opticredit",
+        "principal": Decimal("90000.00"),
+        "annual_rate": Decimal("30.00"),
+        "installments_count": 6,
+        "frequency": "monthly",
+        "first_due_offset_days": -120,
+        "disbursement_offset_days": 140,
+        "status": LoanStatus.OVERDUE,
+        "paid_installments": {1: Decimal("15750.00")},
+        "partial_installments": {},
+    },
+    {
+        "code": "MIC-ACT-003",
+        "lender_key": "microcred",
+        "principal": Decimal("60000.00"),
+        "annual_rate": Decimal("18.00"),
+        "installments_count": 8,
+        "frequency": "monthly",
+        "first_due_offset_days": -20,
+        "disbursement_offset_days": 55,
+        "status": LoanStatus.ACTIVE,
+        "paid_installments": {},
+        "partial_installments": {},
     },
 ]
 
 
-async def run_startup_seed() -> None:
-    """Create/update required dev users without duplicating records."""
-    async with AsyncSessionFactory() as session:
-        lender_result = await session.execute(
-            select(Lender).where(Lender.email == SEED_LENDER_EMAIL)
-        )
-        lender = lender_result.scalar_one_or_none()
+async def _upsert_lender(session, payload: dict[str, Any]) -> Lender:
+    result = await session.execute(select(Lender).where(Lender.email == payload["email"]))
+    lender = result.scalar_one_or_none()
 
-        if lender is None:
-            lender = Lender(
-                legal_name="OptiCredit Demo SRL",
-                commercial_name="OptiCredit Demo",
-                lender_type=LenderType.FINANCIAL,
-                document_type="RNC",
-                document_number=SEED_LENDER_DOCUMENT,
-                email=SEED_LENDER_EMAIL,
-                phone="8090000000",
-                status=LenderStatus.ACTIVE,
-                subscription_plan="professional",
+    if lender is None:
+        lender = Lender(**payload)
+        session.add(lender)
+        await session.flush()
+        logger.info("Startup seed created lender: %s", payload["email"])
+        return lender
+
+    for key, value in payload.items():
+        setattr(lender, key, value)
+    logger.info("Startup seed updated lender: %s", payload["email"])
+    return lender
+
+
+async def _upsert_user(session, payload: dict[str, Any], lender_map: dict[str, Lender]) -> User:
+    result = await session.execute(select(User).where(User.email == payload["email"]))
+    user = result.scalar_one_or_none()
+    lender = lender_map.get(payload["lender_key"]) if payload["lender_key"] else None
+
+    user_values = {
+        "first_name": payload["first_name"],
+        "last_name": payload["last_name"],
+        "phone": payload["phone"],
+        "email": payload["email"],
+        "password_hash": hash_password(TEST_USER_PASSWORD),
+        "account_type": payload["account_type"],
+        "role": payload["role"],
+        "status": payload["status"],
+        "lender_id": lender.id if lender else None,
+    }
+
+    if user is None:
+        user = User(**user_values)
+        session.add(user)
+        await session.flush()
+        logger.info("Startup seed created user: %s", payload["email"])
+        return user
+
+    for key, value in user_values.items():
+        setattr(user, key, value)
+    logger.info("Startup seed updated user: %s", payload["email"])
+    return user
+
+
+async def _upsert_customer_profile(
+    session,
+    customer_user: User,
+    default_lender: Lender,
+) -> Customer:
+    result = await session.execute(select(Customer).where(Customer.user_id == customer_user.id))
+    customer = result.scalar_one_or_none()
+
+    values = {
+        "lender_id": default_lender.id,
+        "user_id": customer_user.id,
+        "first_name": customer_user.first_name,
+        "last_name": customer_user.last_name,
+        "document_type": "Cédula",
+        "document_number": "40200000003",
+        "phone": customer_user.phone or "8092222222",
+        "email": customer_user.email,
+        "status": CustomerStatus.ACTIVE,
+        "credit_limit": Decimal("350000.00"),
+        "city": "Santo Domingo",
+        "province": "Distrito Nacional",
+        "country": "DO",
+    }
+
+    if customer is None:
+        customer = Customer(**values)
+        session.add(customer)
+        await session.flush()
+        logger.info("Startup seed created customer profile: %s", customer_user.email)
+        return customer
+
+    for key, value in values.items():
+        setattr(customer, key, value)
+    logger.info("Startup seed updated customer profile: %s", customer_user.email)
+    return customer
+
+
+async def _ensure_customer_links(session, customer: Customer, lender_map: dict[str, Lender]) -> None:
+    for lender_key in CUSTOMER_ASSOCIATIONS:
+        lender = lender_map[lender_key]
+        result = await session.execute(
+            select(CustomerLenderLink).where(
+                CustomerLenderLink.customer_id == customer.id,
+                CustomerLenderLink.lender_id == lender.id,
             )
-            session.add(lender)
-            await session.flush()
-            logger.info("Startup seed created lender: %s", SEED_LENDER_EMAIL)
+        )
+        link = result.scalar_one_or_none()
+        if link is None:
+            link = CustomerLenderLink(
+                customer_id=customer.id,
+                lender_id=lender.id,
+                status=LinkStatus.LINKED,
+            )
+            session.add(link)
         else:
-            lender.legal_name = "OptiCredit Demo SRL"
-            lender.commercial_name = "OptiCredit Demo"
-            lender.lender_type = LenderType.FINANCIAL
-            lender.document_type = "RNC"
-            lender.document_number = SEED_LENDER_DOCUMENT
-            lender.phone = "8090000000"
-            lender.status = LenderStatus.ACTIVE
-            lender.subscription_plan = "professional"
-            logger.info("Startup seed updated lender: %s", SEED_LENDER_EMAIL)
+            link.status = LinkStatus.LINKED
 
-        for seed_user in SEED_USERS:
-            stmt = select(User).where(User.email == seed_user["email"])
-            result = await session.execute(stmt)
-            user = result.scalar_one_or_none()
 
-            if user is None:
-                user = User(
-                    first_name=seed_user["first_name"],
-                    last_name=seed_user["last_name"],
-                    email=seed_user["email"],
-                    password_hash=hash_password(TEST_USER_PASSWORD),
-                    account_type=seed_user["account_type"],
-                    role=seed_user["role"],
-                    status=seed_user["status"],
-                    lender_id=lender.id if seed_user["use_seed_lender"] else None,
+async def _upsert_lender_accounts(session, lender: Lender, accounts: list[dict[str, Any]]) -> None:
+    for account_data in accounts:
+        result = await session.execute(
+            select(LenderBankAccount).where(
+                and_(
+                    LenderBankAccount.lender_id == lender.id,
+                    LenderBankAccount.bank_name == account_data["bank_name"],
+                    LenderBankAccount.account_number_masked == account_data["account_number_masked"],
                 )
-                session.add(user)
-                action = "created"
+            )
+        )
+        account = result.scalar_one_or_none()
+
+        if account is None:
+            account = LenderBankAccount(lender_id=lender.id, **account_data)
+            session.add(account)
+            continue
+
+        for key, value in account_data.items():
+            setattr(account, key, value)
+
+
+async def _upsert_client_accounts(session, customer: Customer) -> None:
+    for account_data in CLIENT_ACCOUNTS:
+        result = await session.execute(
+            select(ClientBankAccount).where(
+                and_(
+                    ClientBankAccount.customer_id == customer.id,
+                    ClientBankAccount.bank_name == account_data["bank_name"],
+                    ClientBankAccount.account_number_masked == account_data["account_number_masked"],
+                )
+            )
+        )
+        account = result.scalar_one_or_none()
+
+        if account is None:
+            account = ClientBankAccount(customer_id=customer.id, **account_data)
+            session.add(account)
+            continue
+
+        for key, value in account_data.items():
+            setattr(account, key, value)
+
+
+def _calc_installment_status(
+    due_date: date,
+    amount_due: Decimal,
+    amount_paid: Decimal,
+) -> InstallmentStatus:
+    if amount_paid >= amount_due:
+        return InstallmentStatus.PAID
+    if amount_paid > Decimal("0"):
+        return InstallmentStatus.PARTIAL
+    if due_date < date.today():
+        return InstallmentStatus.OVERDUE
+    return InstallmentStatus.PENDING
+
+
+async def _upsert_seed_payment(
+    session,
+    *,
+    marker: str,
+    lender: Lender,
+    customer: Customer,
+    loan: Loan,
+    installment: Installment,
+    submitted_by_user_id,
+    amount: Decimal,
+    status: PaymentStatus,
+    voucher_status: VoucherStatus | None,
+    with_ocr: bool,
+) -> None:
+    result = await session.execute(select(Payment).where(Payment.review_notes == marker))
+    payment = result.scalar_one_or_none()
+
+    reviewed_at = datetime.now(timezone.utc) if status in {PaymentStatus.UNDER_REVIEW, PaymentStatus.APPROVED} else None
+    reviewed_by_user_id = submitted_by_user_id if reviewed_at else None
+
+    payment_values = {
+        "lender_id": lender.id,
+        "customer_id": customer.id,
+        "loan_id": loan.id,
+        "installment_id": installment.id,
+        "amount": amount,
+        "currency": "DOP",
+        "method": PaymentMethod.BANK_TRANSFER,
+        "source": PaymentSource.CUSTOMER_PORTAL,
+        "status": status,
+        "submitted_by_user_id": submitted_by_user_id,
+        "reviewed_by_user_id": reviewed_by_user_id,
+        "reviewed_at": reviewed_at,
+        "review_notes": marker,
+    }
+
+    if payment is None:
+        payment = Payment(**payment_values)
+        session.add(payment)
+        await session.flush()
+    else:
+        for key, value in payment_values.items():
+            setattr(payment, key, value)
+
+    if voucher_status is None:
+        return
+
+    image_hash = f"seed-{marker.lower().replace(':', '-')}"
+    voucher_result = await session.execute(select(Voucher).where(Voucher.image_hash == image_hash))
+    voucher = voucher_result.scalar_one_or_none()
+    voucher_values = {
+        "payment_id": payment.id,
+        "original_file_url": f"/uploads/vouchers/{image_hash}.jpg",
+        "processed_file_url": None,
+        "mime_type": "image/jpeg",
+        "file_size_bytes": "153600",
+        "image_hash": image_hash,
+        "upload_source": "web",
+        "status": voucher_status,
+    }
+
+    if voucher is None:
+        voucher = Voucher(**voucher_values)
+        session.add(voucher)
+        await session.flush()
+    else:
+        for key, value in voucher_values.items():
+            setattr(voucher, key, value)
+
+    ocr_result = await session.execute(select(OcrResult).where(OcrResult.voucher_id == voucher.id))
+    existing_ocr = ocr_result.scalar_one_or_none()
+    if not with_ocr:
+        if existing_ocr is not None:
+            await session.delete(existing_ocr)
+        return
+
+    ocr_values = {
+        "voucher_id": voucher.id,
+        "extracted_text": "TRANSFERENCIA BANCARIA",
+        "detected_amount": amount,
+        "detected_currency": "DOP",
+        "detected_date": date.today().isoformat(),
+        "detected_reference": marker[-8:],
+        "detected_bank_name": "Banco Popular Dominicano",
+        "confidence_score": 0.93,
+        "appears_to_be_receipt": True,
+        "validation_summary": "Seed OCR result for demo flow.",
+        "status": OcrStatus.SUCCESS,
+    }
+    if existing_ocr is None:
+        session.add(OcrResult(**ocr_values))
+    else:
+        for key, value in ocr_values.items():
+            setattr(existing_ocr, key, value)
+
+
+async def _upsert_seed_loans(
+    session,
+    *,
+    customer: Customer,
+    manager_user: User,
+    lender_map: dict[str, Lender],
+) -> None:
+    for scenario in SEED_LOANS:
+        lender = lender_map[scenario["lender_key"]]
+        purpose = f"SEED:{scenario['code']}"
+        app_result = await session.execute(
+            select(LoanApplication).where(
+                LoanApplication.customer_id == customer.id,
+                LoanApplication.lender_id == lender.id,
+                LoanApplication.purpose == purpose,
+            )
+        )
+        application = app_result.scalar_one_or_none()
+        if application is None:
+            application = LoanApplication(
+                lender_id=lender.id,
+                customer_id=customer.id,
+                requested_amount=scenario["principal"],
+                requested_interest_rate=scenario["annual_rate"],
+                requested_installments_count=scenario["installments_count"],
+                requested_frequency=scenario["frequency"],
+                purpose=purpose,
+                status=LoanApplicationStatus.APPROVED,
+                reviewed_by=manager_user.id,
+                reviewed_at=datetime.now(timezone.utc),
+                review_notes="Seed auto approved",
+            )
+            session.add(application)
+            await session.flush()
+        else:
+            application.requested_amount = scenario["principal"]
+            application.requested_interest_rate = scenario["annual_rate"]
+            application.requested_installments_count = scenario["installments_count"]
+            application.requested_frequency = scenario["frequency"]
+            application.status = LoanApplicationStatus.APPROVED
+            application.reviewed_by = manager_user.id
+            application.reviewed_at = datetime.now(timezone.utc)
+            application.review_notes = "Seed auto approved"
+
+        loan_number = f"SEED-{scenario['code']}"
+        loan_result = await session.execute(select(Loan).where(Loan.loan_number == loan_number))
+        loan = loan_result.scalar_one_or_none()
+
+        first_due_date = date.today() + timedelta(days=scenario["first_due_offset_days"])
+        schedule = generate_installment_schedule(
+            principal=float(scenario["principal"]),
+            annual_interest_rate=float(scenario["annual_rate"]),
+            num_installments=scenario["installments_count"],
+            frequency=scenario["frequency"],
+            start_date=datetime.combine(first_due_date, datetime.min.time()),
+        )
+        total_interest = sum(item["interest_component"] for item in schedule)
+        total_amount = scenario["principal"] + total_interest
+
+        loan_values = {
+            "lender_id": lender.id,
+            "customer_id": customer.id,
+            "loan_application_id": application.id,
+            "loan_number": loan_number,
+            "principal_amount": scenario["principal"],
+            "interest_rate": scenario["annual_rate"],
+            "interest_type": "fixed",
+            "total_interest_amount": total_interest,
+            "total_amount": total_amount,
+            "installments_count": scenario["installments_count"],
+            "frequency": scenario["frequency"],
+            "disbursement_date": date.today() - timedelta(days=scenario["disbursement_offset_days"]),
+            "first_due_date": first_due_date,
+            "status": scenario["status"],
+            "approved_by": manager_user.id,
+            "approved_at": datetime.now(timezone.utc) - timedelta(days=2),
+            "internal_notes": "Seed demo loan",
+        }
+
+        if loan is None:
+            loan = Loan(**loan_values)
+            session.add(loan)
+            await session.flush()
+        else:
+            for key, value in loan_values.items():
+                setattr(loan, key, value)
+
+        dis_result = await session.execute(select(Disbursement).where(Disbursement.loan_id == loan.id))
+        disbursement = dis_result.scalars().first()
+        dis_values = {
+            "loan_id": loan.id,
+            "amount": scenario["principal"],
+            "method": "bank_transfer",
+            "bank_name": "Banco Popular Dominicano",
+            "reference_number": f"SEED-DISB-{scenario['code']}",
+            "receipt_url": None,
+            "status": DisbursementStatus.COMPLETED,
+            "created_by": manager_user.id,
+            "disbursed_at": datetime.now(timezone.utc) - timedelta(days=1),
+        }
+        if disbursement is None:
+            session.add(Disbursement(**dis_values))
+        else:
+            for key, value in dis_values.items():
+                setattr(disbursement, key, value)
+
+        installments_by_number: dict[int, Installment] = {}
+        existing_result = await session.execute(select(Installment).where(Installment.loan_id == loan.id))
+        for row in existing_result.scalars().all():
+            installments_by_number[row.installment_number] = row
+
+        for item in schedule:
+            number = item["installment_number"]
+            installment = installments_by_number.get(number)
+            amount_due = item["amount"]
+            amount_paid = scenario["paid_installments"].get(number, Decimal("0.00"))
+            if number in scenario["partial_installments"]:
+                amount_paid = scenario["partial_installments"][number]
+            status = _calc_installment_status(item["due_date"].date(), amount_due, amount_paid)
+
+            inst_values = {
+                "loan_id": loan.id,
+                "installment_number": number,
+                "due_date": item["due_date"].date(),
+                "principal_component": item["principal_component"],
+                "interest_component": item["interest_component"],
+                "amount_due": amount_due,
+                "amount_paid": amount_paid,
+                "late_fee_amount": Decimal("0.00"),
+                "status": status,
+                "paid_at": datetime.now(timezone.utc) - timedelta(days=1) if status == InstallmentStatus.PAID else None,
+            }
+
+            if installment is None:
+                session.add(Installment(**inst_values))
             else:
-                user.first_name = seed_user["first_name"]
-                user.last_name = seed_user["last_name"]
-                user.password_hash = hash_password(TEST_USER_PASSWORD)
-                user.status = seed_user["status"]
-                user.account_type = seed_user["account_type"]
-                user.role = seed_user["role"]
-                user.lender_id = lender.id if seed_user["use_seed_lender"] else None
-                action = "updated"
+                for key, value in inst_values.items():
+                    setattr(installment, key, value)
 
-            logger.info("Startup seed %s user: %s", action, seed_user["email"])
+        await session.flush()
 
-            if seed_user["account_type"] == AccountType.CUSTOMER:
-                customer_stmt = select(Customer).where(Customer.user_id == user.id)
-                customer_result = await session.execute(customer_stmt)
-                customer = customer_result.scalar_one_or_none()
+        ordered_installments_result = await session.execute(
+            select(Installment)
+            .where(Installment.loan_id == loan.id)
+            .order_by(Installment.installment_number.asc())
+        )
+        ordered_installments = ordered_installments_result.scalars().all()
+        if not ordered_installments:
+            continue
 
-                if customer is None:
-                    customer = Customer(
-                        lender_id=lender.id,
-                        user_id=user.id,
-                        first_name=seed_user["first_name"],
-                        last_name=seed_user["last_name"],
-                        document_type="Cédula",
-                        document_number="40200000001",
-                        phone="8090000000",
-                        email=seed_user["email"],
-                        status=CustomerStatus.ACTIVE,
-                    )
-                    session.add(customer)
-                    logger.info(
-                        "Startup seed created customer profile for: %s",
-                        seed_user["email"],
-                    )
-                else:
-                    customer.first_name = seed_user["first_name"]
-                    customer.last_name = seed_user["last_name"]
-                    customer.status = CustomerStatus.ACTIVE
-                    logger.info(
-                        "Startup seed updated customer profile for: %s",
-                        seed_user["email"],
-                    )
+        first_installment = ordered_installments[0]
+        await _upsert_seed_payment(
+            session,
+            marker=f"SEED:{loan_number}:APPROVED",
+            lender=lender,
+            customer=customer,
+            loan=loan,
+            installment=first_installment,
+            submitted_by_user_id=customer.user_id,
+            amount=first_installment.amount_due,
+            status=PaymentStatus.APPROVED,
+            voucher_status=VoucherStatus.PROCESSED,
+            with_ocr=True,
+        )
+
+        second_installment = ordered_installments[1] if len(ordered_installments) > 1 else first_installment
+        await _upsert_seed_payment(
+            session,
+            marker=f"SEED:{loan_number}:UNDER_REVIEW",
+            lender=lender,
+            customer=customer,
+            loan=loan,
+            installment=second_installment,
+            submitted_by_user_id=customer.user_id,
+            amount=second_installment.amount_due,
+            status=PaymentStatus.UNDER_REVIEW,
+            voucher_status=VoucherStatus.PROCESSED,
+            with_ocr=True,
+        )
+
+        pending_installment = ordered_installments[2] if len(ordered_installments) > 2 else second_installment
+        await _upsert_seed_payment(
+            session,
+            marker=f"SEED:{loan_number}:SUBMITTED",
+            lender=lender,
+            customer=customer,
+            loan=loan,
+            installment=pending_installment,
+            submitted_by_user_id=customer.user_id,
+            amount=pending_installment.amount_due,
+            status=PaymentStatus.SUBMITTED,
+            voucher_status=VoucherStatus.UPLOADED,
+            with_ocr=False,
+        )
+
+
+async def run_startup_seed() -> None:
+    """Create/update required dev data without duplicating records."""
+    async with AsyncSessionFactory() as session:
+        lender_map: dict[str, Lender] = {}
+        for lender_key, lender_data in SEED_LENDERS.items():
+            lender_map[lender_key] = await _upsert_lender(session, lender_data)
+
+        user_map: dict[str, User] = {}
+        for user_data in SEED_USERS:
+            user_map[user_data["email"]] = await _upsert_user(session, user_data, lender_map)
+
+        customer_user = user_map["cliente@opticredit.app"]
+        customer = await _upsert_customer_profile(
+            session,
+            customer_user=customer_user,
+            default_lender=lender_map["opticredit"],
+        )
+
+        await _ensure_customer_links(session, customer, lender_map)
+
+        for lender_key, accounts in LENDER_ACCOUNTS.items():
+            await _upsert_lender_accounts(session, lender_map[lender_key], accounts)
+
+        await _upsert_client_accounts(session, customer)
+
+        manager_user = user_map["manager@opticredit.app"]
+        await _upsert_seed_loans(
+            session,
+            customer=customer,
+            manager_user=manager_user,
+            lender_map=lender_map,
+        )
 
         await session.commit()
+        logger.info("Startup seed completed with enriched demo data.")

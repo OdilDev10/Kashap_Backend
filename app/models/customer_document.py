@@ -33,6 +33,11 @@ class CustomerDocument(Base, BaseModel):
         String(50), default="pending"
     )  # pending, verified, rejected
     notes: Mapped[str] = mapped_column(String(500), nullable=True)
+    bank_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("client_bank_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     reviewed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

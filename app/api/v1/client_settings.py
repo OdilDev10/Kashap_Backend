@@ -2,7 +2,8 @@
 
 import uuid
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from uuid import UUID
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -158,6 +159,7 @@ class DocumentResponse(BaseModel):
     file_size: int | None
     mime_type: str
     status: str
+    bank_account_id: str | None
     created_at: str
 
 
@@ -187,6 +189,9 @@ async def list_client_documents(
                 "file_size": doc.file_size,
                 "mime_type": doc.mime_type,
                 "status": doc.status,
+                "bank_account_id": str(doc.bank_account_id)
+                if doc.bank_account_id
+                else None,
                 "created_at": doc.created_at.isoformat(),
             }
             for doc in documents
@@ -198,6 +203,7 @@ async def list_client_documents(
 async def upload_client_document(
     document_type: DocumentType,
     file: UploadFile = File(...),
+    bank_account_id: str | None = None,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> DocumentResponse:
@@ -217,6 +223,13 @@ async def upload_client_document(
             detail=f"File extension not allowed. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
         )
 
+    bank_account_uuid = None
+    if bank_account_id:
+        try:
+            bank_account_uuid = UUID(bank_account_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid bank account ID")
+
     file_content = await file.read()
     file_size = len(file_content)
 
@@ -235,6 +248,7 @@ async def upload_client_document(
         file_size=file_size,
         mime_type=file.content_type,
         status="pending",
+        bank_account_id=bank_account_uuid,
     )
     session.add(document)
     await session.commit()
@@ -249,6 +263,9 @@ async def upload_client_document(
         file_size=document.file_size,
         mime_type=document.mime_type,
         status=document.status,
+        bank_account_id=str(document.bank_account_id)
+        if document.bank_account_id
+        else None,
         created_at=document.created_at.isoformat(),
     )
 
