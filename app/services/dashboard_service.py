@@ -491,6 +491,76 @@ class DashboardService:
 
         return items, total
 
+    async def get_customer_loans(
+        self,
+        lender_id: str,
+        customer_id: str,
+        limit: int = 100,
+    ) -> list[dict]:
+        """Return loans for one customer within the lender scope."""
+        result = await self.session.execute(
+            select(Loan)
+            .where(
+                Loan.lender_id == lender_id,
+                Loan.customer_id == customer_id,
+            )
+            .order_by(desc(Loan.created_at))
+            .limit(limit)
+        )
+        loans = result.scalars().all()
+
+        items: list[dict] = []
+        for loan in loans:
+            installment_amount = (
+                float(loan.total_amount / loan.installments_count)
+                if loan.installments_count > 0
+                else 0.0
+            )
+            items.append(
+                {
+                    "id": str(loan.id),
+                    "loan_number": loan.loan_number,
+                    "principal_amount": float(loan.principal_amount),
+                    "total_amount": float(loan.total_amount),
+                    "installment_amount": installment_amount,
+                    "installments_count": loan.installments_count,
+                    "status": loan.status.value,
+                    "created_at": loan.created_at,
+                }
+            )
+        return items
+
+    async def get_customer_payment_history(
+        self,
+        lender_id: str,
+        customer_id: str,
+        limit: int = 200,
+    ) -> list[dict]:
+        """Return payment history for one customer within lender scope."""
+        result = await self.session.execute(
+            select(Payment)
+            .where(
+                Payment.lender_id == lender_id,
+                Payment.customer_id == customer_id,
+            )
+            .order_by(desc(Payment.created_at))
+            .limit(limit)
+        )
+        payments = result.scalars().all()
+
+        return [
+            {
+                "id": str(payment.id),
+                "loan_id": str(payment.loan_id) if payment.loan_id else None,
+                "installment_id": str(payment.installment_id) if payment.installment_id else None,
+                "amount": float(payment.amount),
+                "status": payment.status.value,
+                "submitted_at": payment.created_at,
+                "reviewed_at": payment.reviewed_at,
+            }
+            for payment in payments
+        ]
+
     # === Payments with pagination + search ===
     async def list_pending_vouchers(
         self,

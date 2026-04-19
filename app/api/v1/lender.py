@@ -117,6 +117,38 @@ async def get_payment_kpis(
     return PaymentKPIs(**data)
 
 
+@router.get("/customers/{customer_id}/loans")
+async def get_customer_loans_for_lender(
+    customer_id: UUID,
+    limit: int = Query(default=100, ge=1, le=500),
+    current_user: User = Depends(
+        require_roles("platform_admin", "owner", "manager", "reviewer", "agent")
+    ),
+    lender_id: str = Depends(get_lender_context),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Get loans for a specific customer in lender scope."""
+    service = DashboardService(session)
+    items = await service.get_customer_loans(lender_id, str(customer_id), limit)
+    return {"items": items, "total": len(items), "limit": limit}
+
+
+@router.get("/customers/{customer_id}/payments")
+async def get_customer_payments_for_lender(
+    customer_id: UUID,
+    limit: int = Query(default=200, ge=1, le=500),
+    current_user: User = Depends(
+        require_roles("platform_admin", "owner", "manager", "reviewer", "agent")
+    ),
+    lender_id: str = Depends(get_lender_context),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Get payment history for a specific customer in lender scope."""
+    service = DashboardService(session)
+    items = await service.get_customer_payment_history(lender_id, str(customer_id), limit)
+    return {"items": items, "total": len(items), "limit": limit}
+
+
 @router.get("/users")
 async def list_lender_users(
     search: str | None = Query(default=None),

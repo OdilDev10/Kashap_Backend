@@ -18,6 +18,7 @@ class LenderBase(BaseModel):
     document_number: str = Field(..., min_length=1, max_length=50)
     email: EmailStr
     phone: str = Field(..., min_length=1, max_length=20)
+    address_line: str | None = Field(default=None, max_length=255)
     subscription_plan: str | None = Field(default=None, max_length=50)
     subscription_starts_at: date | None = None
     subscription_ends_at: date | None = None
@@ -39,6 +40,7 @@ class LenderUpdate(BaseModel):
     document_number: str | None = Field(default=None, min_length=1, max_length=50)
     email: EmailStr | None = None
     phone: str | None = Field(default=None, min_length=1, max_length=20)
+    address_line: str | None = Field(default=None, max_length=255)
     status: LenderStatus | None = None
     subscription_plan: str | None = Field(default=None, max_length=50)
     subscription_starts_at: date | None = None

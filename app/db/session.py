@@ -61,6 +61,14 @@ async def init_db() -> None:
         await conn.execute(
             text(
                 """
+                ALTER TABLE IF EXISTS lenders
+                ADD COLUMN IF NOT EXISTS address_line VARCHAR(255)
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
                 DO $$
                 BEGIN
                     IF NOT EXISTS (

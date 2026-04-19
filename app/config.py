@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     # Email
     smtp_email: str = "noreply@prestamos.local"
     smtp_password: str = ""
+    support_inbox_email: str = "support@prestamos.local"
 
     # SMS (Twilio)
     sms_enabled: bool = False

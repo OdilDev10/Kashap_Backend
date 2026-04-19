@@ -13,6 +13,7 @@ from app.models.subscription import Subscription, SubscriptionInvoice
 from app.models.notification import Notification
 from app.models.customer_document import CustomerDocument
 from app.models.client_bank_account import ClientBankAccount
+from app.models.support_request import SupportRequest
 
 __all__ = [
     "BaseModel",
@@ -38,4 +39,5 @@ __all__ = [
     "Notification",
     "CustomerDocument",
     "ClientBankAccount",
+    "SupportRequest",
 ]

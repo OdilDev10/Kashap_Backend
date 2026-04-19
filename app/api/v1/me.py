@@ -17,7 +17,11 @@ from app.models.customer_lender_link import CustomerLenderLink
 from app.core.enums import LenderStatus, LinkStatus
 from app.repositories.customer_repo import CustomerRepository
 from app.repositories.loan_repo import LoanRepository, InstallmentRepository
-from app.repositories.payment_repo import PaymentRepository, VoucherRepository, OcrResultRepository
+from app.repositories.payment_repo import (
+    PaymentRepository,
+    VoucherRepository,
+    OcrResultRepository,
+)
 from app.services.payment_service import PaymentService
 from app.services.voucher_service import VoucherService
 from app.core.exceptions import (
@@ -103,7 +107,9 @@ async def get_current_customer(
         return customer
 
     # Backward compatibility: old customer records may exist without user_id link.
-    customer = await repo.get_by_email_and_lender(current_user.email, current_user.lender_id)
+    customer = await repo.get_by_email_and_lender(
+        current_user.email, current_user.lender_id
+    )
     if not customer:
         raise NotFoundException("No customer profile found for this user")
 
@@ -112,41 +118,6 @@ async def get_current_customer(
         await session.commit()
 
     return customer
-
-
-@router.post("/payments")
-async def submit_payment(
-    request: SubmitPaymentRequest,
-    current_user: User = Depends(get_current_user),
-    customer: Customer = Depends(get_current_customer),
-    session: AsyncSession = Depends(get_db),
-) -> dict:
-    """Submit payment for installment (customer portal)."""
-    loan_repo = LoanRepository(session)
-    installment_repo = InstallmentRepository(session)
-
-    loan = await loan_repo.get_or_404(request.loan_id)
-    if loan.customer_id != customer.id:
-        raise ForbiddenException("This loan does not belong to your account")
-
-    installment = await installment_repo.get_or_404(request.installment_id)
-    if str(installment.loan_id) != request.loan_id:
-        raise ValidationException("Installment does not belong to the specified loan")
-
-    service = PaymentService(session)
-    try:
-        result = await service.submit_payment(
-            loan_id=request.loan_id,
-            installment_id=request.installment_id,
-            customer_id=str(customer.id),
-            lender_id=str(loan.lender_id),
-            amount=request.amount,
-            submitted_by_user_id=str(current_user.id),
-            source="customer_portal",
-        )
-        return result
-    except ValidationException as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @router.get("/loans")
@@ -169,7 +140,9 @@ async def get_my_loans(
         )
         if link_result.scalar_one_or_none() is None:
             raise ForbiddenException("No tienes asociación activa con esta financiera")
-        loans = await loan_repo.get_by_customer_and_lender(str(customer.id), str(lender_id))
+        loans = await loan_repo.get_by_customer_and_lender(
+            str(customer.id), str(lender_id)
+        )
     else:
         loans = await loan_repo.get_by_customer(str(customer.id))
 
@@ -234,7 +207,9 @@ async def get_my_association(
     link = link_result.scalars().first()
     lender = None
     if link:
-        lender_result = await session.execute(select(Lender).where(Lender.id == link.lender_id))
+        lender_result = await session.execute(
+            select(Lender).where(Lender.id == link.lender_id)
+        )
         lender = lender_result.scalar_one_or_none()
 
     return {
@@ -242,6 +217,16 @@ async def get_my_association(
         "lender_id": str(link.lender_id) if link else None,
         "lender_legal_name": lender.legal_name if lender else None,
         "lender_commercial_name": lender.commercial_name if lender else None,
+        "lender_type": (
+            lender.lender_type.value
+            if lender and hasattr(lender.lender_type, "value")
+            else (str(lender.lender_type) if lender else None)
+        ),
+        "lender_document_type": lender.document_type if lender else None,
+        "lender_document_number": lender.document_number if lender else None,
+        "lender_phone": lender.phone if lender else None,
+        "lender_email": lender.email if lender else None,
+        "lender_address": lender.address_line if lender else None,
         "lender_status": (
             lender.status.value
             if lender and hasattr(lender.status, "value")
@@ -274,8 +259,20 @@ async def list_my_associations(
             "lender_id": str(lender.id),
             "lender_legal_name": lender.legal_name,
             "lender_commercial_name": lender.commercial_name,
+            "lender_type": (
+                lender.lender_type.value
+                if hasattr(lender.lender_type, "value")
+                else str(lender.lender_type)
+            ),
+            "lender_document_type": lender.document_type,
+            "lender_document_number": lender.document_number,
+            "lender_phone": lender.phone,
+            "lender_email": lender.email,
+            "lender_address": lender.address_line,
             "lender_status": (
-                lender.status.value if hasattr(lender.status, "value") else str(lender.status)
+                lender.status.value
+                if hasattr(lender.status, "value")
+                else str(lender.status)
             ),
         }
         for _, lender in rows
@@ -304,13 +301,16 @@ async def list_lenders_for_customer(
     associated_lender_ids = {str(link_id) for link_id in links_result.scalars().all()}
 
     query = select(Lender).where(Lender.status == LenderStatus.ACTIVE)
-    count_query = select(func.count(Lender.id)).where(Lender.status == LenderStatus.ACTIVE)
+    count_query = select(func.count(Lender.id)).where(
+        Lender.status == LenderStatus.ACTIVE
+    )
 
     if search:
         search_filter = or_(
             Lender.legal_name.ilike(f"%{search}%"),
             Lender.commercial_name.ilike(f"%{search}%"),
             Lender.document_number.ilike(f"%{search}%"),
+            Lender.address_line.ilike(f"%{search}%"),
         )
         query = query.where(search_filter)
         count_query = count_query.where(search_filter)
@@ -335,6 +335,11 @@ async def list_lenders_for_customer(
                     if hasattr(lender.lender_type, "value")
                     else str(lender.lender_type)
                 ),
+                "document_type": lender.document_type,
+                "document_number": lender.document_number,
+                "phone": lender.phone,
+                "email": lender.email,
+                "address": lender.address_line,
                 "status": (
                     lender.status.value
                     if hasattr(lender.status, "value")
@@ -363,7 +368,9 @@ async def get_lender_accounts_for_customer(
             LenderBankAccount.lender_id == lender_id,
             LenderBankAccount.status == "active",
         )
-        .order_by(LenderBankAccount.is_primary.desc(), LenderBankAccount.created_at.desc())
+        .order_by(
+            LenderBankAccount.is_primary.desc(), LenderBankAccount.created_at.desc()
+        )
     )
     accounts = result.scalars().all()
     return {
@@ -544,36 +551,6 @@ async def get_my_payments(
     }
 
 
-@router.post("/payments/{payment_id}/vouchers/upload")
-async def upload_my_payment_voucher(
-    payment_id: UUID,
-    file: UploadFile = File(...),
-    upload_source: str = "web",
-    customer: Customer = Depends(get_current_customer),
-    session: AsyncSession = Depends(get_db),
-) -> dict:
-    """Upload voucher for customer's own payment and trigger OCR."""
-    payment_repo = PaymentRepository(session)
-    payment = await payment_repo.get_or_404(str(payment_id))
-    if payment.customer_id != customer.id:
-        raise ForbiddenException("No tienes permiso para subir voucher a este pago")
-    await _assert_customer_linked_to_lender(customer, payment.lender_id, session)
-
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise ValidationException("El archivo debe ser una imagen")
-
-    file_content = await file.read()
-    service = VoucherService(session)
-    return await service.upload_voucher(
-        payment_id=str(payment_id),
-        file_content=file_content,
-        file_name=file.filename or "voucher.jpg",
-        mime_type=file.content_type,
-        upload_source=upload_source,
-        lender_id=str(payment.lender_id),
-    )
-
-
 @router.post("/payments/{payment_id}/submit-review")
 async def submit_my_payment_for_review(
     payment_id: UUID,
@@ -620,7 +597,9 @@ async def get_my_payment_detail(
                 "uploaded_at": voucher.created_at.isoformat(),
                 "ocr_status": ocr.status.value if ocr else None,
                 "ocr_confidence": float(ocr.confidence_score) if ocr else None,
-                "ocr_detected_amount": float(ocr.detected_amount) if ocr and ocr.detected_amount else None,
+                "ocr_detected_amount": float(ocr.detected_amount)
+                if ocr and ocr.detected_amount
+                else None,
                 "ocr_detected_bank": ocr.detected_bank_name if ocr else None,
             }
         )

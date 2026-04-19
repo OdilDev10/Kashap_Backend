@@ -29,6 +29,7 @@ class ClientProfileResponse(BaseModel):
     phone: str | None = None
     document_type: str | None = None
     document_number: str | None = None
+    address_line: str | None = None
     status: str
 
 
@@ -67,6 +68,7 @@ async def get_client_settings(
         phone=customer.phone,
         document_type=customer.document_type,
         document_number=customer.document_number,
+        address_line=customer.address_line,
         status=customer.status.value
         if hasattr(customer.status, "value")
         else customer.status,

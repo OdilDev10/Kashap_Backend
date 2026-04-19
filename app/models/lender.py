@@ -31,6 +31,7 @@ class Lender(Base, BaseModel):
     document_number: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     phone: Mapped[str] = mapped_column(String(20), nullable=False)
+    address_line: Mapped[Optional[str]] = mapped_column(String(255))
     status: Mapped[LenderStatus] = mapped_column(Enum(LenderStatus), default=LenderStatus.PENDING)
     subscription_plan: Mapped[Optional[str]] = mapped_column(String(50))
     subscription_starts_at: Mapped[Optional[datetime]] = mapped_column(Date)

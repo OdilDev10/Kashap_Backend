@@ -25,6 +25,7 @@ class LenderCompanyInfo(BaseModel):
     document_number: str
     email: str
     phone: str
+    address_line: str | None = None
 
 
 class UpdateLenderCompanyRequest(BaseModel):
@@ -34,6 +35,7 @@ class UpdateLenderCompanyRequest(BaseModel):
     document_number: str | None = None
     email: str | None = None
     phone: str | None = None
+    address_line: str | None = None
 
 
 class SubscriptionInfo(BaseModel):
@@ -75,6 +77,7 @@ async def get_lender_settings(
         document_number=lender.document_number,
         email=lender.email,
         phone=lender.phone,
+        address_line=lender.address_line,
     )
 
     sub_info = SubscriptionInfo(
