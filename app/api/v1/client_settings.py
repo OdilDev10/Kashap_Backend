@@ -376,16 +376,20 @@ async def create_bank_account(
     """Create a new bank account for the authenticated client."""
     customer = await get_customer_or_404(current_user, session)
 
-    if request.is_primary:
-        result = await session.execute(
-            select(ClientBankAccount).where(
-                ClientBankAccount.customer_id == customer.id,
-                ClientBankAccount.is_primary == True,
-            )
+    existing_accounts_result = await session.execute(
+        select(ClientBankAccount).where(
+            ClientBankAccount.customer_id == customer.id,
+            ClientBankAccount.status != "deleted",
         )
-        existing_primary = result.scalars().all()
-        for acc in existing_primary:
-            acc.is_primary = False
+    )
+    existing_accounts = existing_accounts_result.scalars().all()
+    has_primary = any(acc.is_primary for acc in existing_accounts)
+
+    should_be_primary = request.is_primary or not has_primary
+    if should_be_primary:
+        for acc in existing_accounts:
+            if acc.is_primary:
+                acc.is_primary = False
 
     account = ClientBankAccount(
         customer_id=customer.id,
@@ -394,7 +398,7 @@ async def create_bank_account(
         account_number_masked=mask_account_number(request.account_number),
         account_holder_name=request.account_holder_name,
         currency=request.currency,
-        is_primary=request.is_primary,
+        is_primary=should_be_primary,
         status="active",
     )
     session.add(account)

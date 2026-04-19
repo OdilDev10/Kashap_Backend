@@ -383,6 +383,66 @@ async def _upsert_client_accounts(session, customer: Customer) -> None:
             setattr(account, key, value)
 
 
+async def _normalize_lender_primary_account(
+    session,
+    lender_id,
+    preferred_masked: str | None = None,
+) -> None:
+    result = await session.execute(
+        select(LenderBankAccount)
+        .where(
+            LenderBankAccount.lender_id == lender_id,
+            LenderBankAccount.status != "deleted",
+        )
+        .order_by(LenderBankAccount.created_at.asc())
+    )
+    accounts = result.scalars().all()
+    if not accounts:
+        return
+
+    primary = None
+    if preferred_masked:
+        primary = next(
+            (acc for acc in accounts if acc.account_number_masked == preferred_masked),
+            None,
+        )
+    if primary is None:
+        primary = next((acc for acc in accounts if acc.is_primary), None) or accounts[0]
+
+    for acc in accounts:
+        acc.is_primary = acc.id == primary.id
+
+
+async def _normalize_client_primary_account(
+    session,
+    customer_id,
+    preferred_masked: str | None = None,
+) -> None:
+    result = await session.execute(
+        select(ClientBankAccount)
+        .where(
+            ClientBankAccount.customer_id == customer_id,
+            ClientBankAccount.status != "deleted",
+        )
+        .order_by(ClientBankAccount.created_at.asc())
+    )
+    accounts = result.scalars().all()
+    if not accounts:
+        return
+
+    primary = None
+    if preferred_masked:
+        primary = next(
+            (acc for acc in accounts if acc.account_number_masked == preferred_masked),
+            None,
+        )
+    if primary is None:
+        primary = next((acc for acc in accounts if acc.is_primary), None) or accounts[0]
+
+    for acc in accounts:
+        acc.is_primary = acc.id == primary.id
+
+
 def _calc_installment_status(
     due_date: date,
     amount_due: Decimal,
@@ -711,8 +771,26 @@ async def run_startup_seed() -> None:
 
         for lender_key, accounts in LENDER_ACCOUNTS.items():
             await _upsert_lender_accounts(session, lender_map[lender_key], accounts)
+            preferred = next(
+                (acc["account_number_masked"] for acc in accounts if acc.get("is_primary")),
+                None,
+            )
+            await _normalize_lender_primary_account(
+                session,
+                lender_map[lender_key].id,
+                preferred_masked=preferred,
+            )
 
         await _upsert_client_accounts(session, customer)
+        preferred_client = next(
+            (acc["account_number_masked"] for acc in CLIENT_ACCOUNTS if acc.get("is_primary")),
+            None,
+        )
+        await _normalize_client_primary_account(
+            session,
+            customer.id,
+            preferred_masked=preferred_client,
+        )
 
         manager_user = user_map["manager@opticredit.app"]
         await _upsert_seed_loans(

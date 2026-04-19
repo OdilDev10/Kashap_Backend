@@ -310,15 +310,20 @@ async def create_lender_bank_account(
     session: AsyncSession = Depends(get_db),
 ) -> LenderBankAccountResponse:
     """Create a new bank account for the lender."""
-    if request.is_primary:
-        result = await session.execute(
-            select(LenderBankAccount).where(
-                LenderBankAccount.lender_id == lender_id,
-                LenderBankAccount.is_primary == True,
-            )
+    existing_accounts_result = await session.execute(
+        select(LenderBankAccount).where(
+            LenderBankAccount.lender_id == lender_id,
+            LenderBankAccount.status != "deleted",
         )
-        for acc in result.scalars().all():
-            acc.is_primary = False
+    )
+    existing_accounts = existing_accounts_result.scalars().all()
+    has_primary = any(acc.is_primary for acc in existing_accounts)
+
+    should_be_primary = request.is_primary or not has_primary
+    if should_be_primary:
+        for acc in existing_accounts:
+            if acc.is_primary:
+                acc.is_primary = False
 
     account = LenderBankAccount(
         lender_id=lender_id,
@@ -327,7 +332,7 @@ async def create_lender_bank_account(
         account_number_masked=mask_account_number(request.account_number),
         account_holder_name=request.account_holder_name,
         currency=request.currency,
-        is_primary=request.is_primary,
+        is_primary=should_be_primary,
         status="active",
     )
     session.add(account)
