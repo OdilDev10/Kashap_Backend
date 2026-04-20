@@ -3,16 +3,20 @@
 import asyncio
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, update
 
 from app.db.session import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, security
+from app.core.security import decode_token
+from app.core.exceptions import UnauthorizedException
 from app.models.user import User
 from app.models.notification import Notification
 from app.core.exceptions import NotFoundException
 from app.services.sse_manager import sse_manager
+from app.repositories.user_repo import UserRepository
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -62,7 +66,9 @@ async def list_notifications(
 @router.get("/stream")
 async def notification_stream(
     request: Request,
-    current_user: User = Depends(get_current_user),
+    access_token: str | None = Query(default=None),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    session: AsyncSession = Depends(get_db),
 ):
     """
     SSE endpoint for real-time notifications.
@@ -70,6 +76,26 @@ async def notification_stream(
     Clients connect to this endpoint and receive notifications
     as Server-Sent Events.
     """
+    token: str | None = None
+    if credentials and credentials.scheme.lower() == "bearer":
+        token = credentials.credentials
+    elif access_token:
+        token = access_token
+
+    if not token:
+        raise UnauthorizedException("Authentication credentials were not provided")
+
+    payload = decode_token(token)
+    if payload.get("type") != "access":
+        raise UnauthorizedException("Invalid access token")
+
+    user_id_claim = payload.get("sub")
+    if not user_id_claim:
+        raise UnauthorizedException("Token subject is missing")
+
+    current_user = await UserRepository(session).get_or_404(
+        user_id_claim, error_code="USER_NOT_FOUND"
+    )
     user_id = str(current_user.id)
     queue = sse_manager.connect(user_id)
 

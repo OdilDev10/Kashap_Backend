@@ -124,3 +124,57 @@ class AuditLogRepository(BaseRepository[AuditLog]):
         )
         result = await self.session.execute(query)
         return list(result.scalars().all())
+
+    async def list_for_platform(
+        self,
+        user_id: UUID | None = None,
+        action: str | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        search: str | None = None,
+        skip: int = 0,
+        limit: int = 50,
+    ) -> Tuple[list[AuditLog], int]:
+        """List audit logs for platform-wide queries (admin)."""
+        conditions = []
+
+        if user_id:
+            conditions.append(self.model.user_id == user_id)
+
+        if action:
+            conditions.append(self.model.action == action)
+
+        if resource_type:
+            conditions.append(self.model.resource_type == resource_type)
+
+        if resource_id:
+            conditions.append(self.model.resource_id == resource_id)
+
+        if search:
+            search_pattern = f"%{search}%"
+            conditions.append(
+                or_(
+                    self.model.description.ilike(search_pattern),
+                    self.model.user_email.ilike(search_pattern),
+                    self.model.user_name.ilike(search_pattern),
+                    self.model.resource_id.ilike(search_pattern),
+                )
+            )
+
+        where_clause = and_(*conditions) if conditions else True
+
+        count_stmt = select(func.count(self.model.id)).where(where_clause)
+        count_result = await self.session.execute(count_stmt)
+        total = count_result.scalar() or 0
+
+        query = (
+            select(self.model)
+            .where(where_clause)
+            .order_by(desc(self.model.created_at))
+            .offset(skip)
+            .limit(limit)
+        )
+        result = await self.session.execute(query)
+        items = result.scalars().all()
+
+        return list(items), total

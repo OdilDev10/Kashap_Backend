@@ -162,25 +162,13 @@ async def get_my_loans(
             )
         )
         if link_result.scalar_one_or_none() is None:
-            from fastapi import HTTPException
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=get_error_response(
-                ErrorCode.AUTH_PERMISSION_DENIED,
-                "No tienes asociación activa con esta financiera",
-            ),
-        )
-
-    if not link_result.scalar_one_or_none():
-        from fastapi import HTTPException
-
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=get_error_response(
-                ErrorCode.AUTH_PERMISSION_DENIED,
-                "No tienes asociación activa con esta financiera",
-            ),
-        )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=get_error_response(
+                    ErrorCode.AUTH_PERMISSION_DENIED,
+                    "No tienes asociación activa con esta financiera",
+                ),
+            )
         loans = await loan_repo.get_by_customer_and_lender(
             str(customer.id), str(lender_id)
         )
@@ -576,25 +564,13 @@ async def get_my_payments(
             )
         )
         if link_result.scalar_one_or_none() is None:
-            from fastapi import HTTPException
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=get_error_response(
-                ErrorCode.AUTH_PERMISSION_DENIED,
-                "No tienes asociación activa con esta financiera",
-            ),
-        )
-
-    if not link_result.scalar_one_or_none():
-        from fastapi import HTTPException
-
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=get_error_response(
-                ErrorCode.AUTH_PERMISSION_DENIED,
-                "No tienes asociación activa con esta financiera",
-            ),
-        )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=get_error_response(
+                    ErrorCode.AUTH_PERMISSION_DENIED,
+                    "No tienes asociación activa con esta financiera",
+                ),
+            )
         payments = [payment for payment in payments if payment.lender_id == lender_id]
 
     items = []

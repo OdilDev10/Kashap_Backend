@@ -21,6 +21,7 @@ from app.api.v1.admin import router as admin_router
 from app.api.v1.plans import router as plans_router
 from app.api.v1.admin_reports import router as admin_reports_router
 from app.api.v1.admin_system import router as admin_system_router
+from app.api.v1.admin_users import router as admin_users_router
 from app.api.v1.lender_settings import router as lender_settings_router
 from app.api.v1.client_settings import router as client_settings_router
 from app.api.v1.loan_products import router as loan_products_router
@@ -49,6 +50,7 @@ api_router.include_router(admin_router)
 api_router.include_router(plans_router)
 api_router.include_router(admin_reports_router)
 api_router.include_router(admin_system_router)
+api_router.include_router(admin_users_router)
 api_router.include_router(lender_settings_router)
 api_router.include_router(client_settings_router)
 api_router.include_router(loan_products_router)
