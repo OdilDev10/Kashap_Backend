@@ -1,6 +1,7 @@
 import os
 import json
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import field_validator
 from pydantic import model_validator
@@ -25,6 +26,7 @@ class Settings(BaseSettings):
     # Environment
     environment: Literal["development", "production"] = "development"
     app_url: str = "http://localhost:3000"
+    api_url: str = "http://127.0.0.1:8000"
     enable_startup_seed: bool = False
 
     # Email (Resend)
@@ -102,6 +104,16 @@ class Settings(BaseSettings):
             return [item.strip() for item in raw.split(",") if item.strip()]
         return value
 
+    @field_validator("cors_origins")
+    @classmethod
+    def _normalize_cors_origins(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError("CORS_ORIGINS values must be strings")
+            normalized.append(cls._normalize_origin(item))
+        return sorted(set(normalized))
+
     @field_validator("storage_backend", mode="before")
     @classmethod
     def _force_r2_backend(cls, value):
@@ -128,6 +140,55 @@ class Settings(BaseSettings):
             raise ValueError(f"Missing required R2 env vars: {missing_envs}")
 
         return self
+
+    @model_validator(mode="after")
+    def _validate_cors_configuration(self):
+        if not self.cors_origins:
+            raise ValueError("CORS_ORIGINS must not be empty")
+
+        if self.environment == "production":
+            if not self.app_url.startswith("https://"):
+                raise ValueError("APP_URL must use https:// in production")
+            if not self.api_url.startswith("https://"):
+                raise ValueError("API_URL must use https:// in production")
+            for origin in self.cors_origins:
+                if "localhost" in origin or "127.0.0.1" in origin:
+                    raise ValueError(
+                        "CORS_ORIGINS in production must not include localhost/127.0.0.1"
+                    )
+
+        return self
+
+    @staticmethod
+    def _normalize_origin(origin: str) -> str:
+        raw = origin.strip()
+        if not raw:
+            raise ValueError("CORS origin cannot be empty")
+        if "*" in raw:
+            raise ValueError("CORS wildcards are not allowed")
+
+        parsed = urlparse(raw)
+        scheme = (parsed.scheme or "").lower()
+        netloc = (parsed.netloc or "").lower()
+        path = parsed.path or ""
+
+        if scheme not in {"http", "https"}:
+            raise ValueError(f"Invalid CORS origin scheme: {raw}")
+        if not netloc:
+            raise ValueError(f"Invalid CORS origin host: {raw}")
+        if path not in {"", "/"}:
+            raise ValueError(f"CORS origin must not include path: {raw}")
+
+        return f"{scheme}://{netloc}"
+
+    def is_allowed_origin(self, origin: str | None) -> bool:
+        if not origin:
+            return False
+        try:
+            normalized = self._normalize_origin(origin)
+        except ValueError:
+            return False
+        return normalized in self.cors_origins
 
 
 # Global settings instance

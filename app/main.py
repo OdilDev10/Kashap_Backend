@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 from time import perf_counter
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -91,6 +91,15 @@ def _normalize_http_exception_detail(
     return default_code, default_message, None
 
 
+def _apply_cors_headers(request: Request, response: Response) -> Response:
+    origin = request.headers.get("origin")
+    if settings.is_allowed_origin(origin):
+        response.headers["Access-Control-Allow-Origin"] = str(origin)
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Vary"] = "Origin"
+    return response
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Initialize and close shared application resources."""
@@ -145,6 +154,57 @@ app.include_router(api_router, prefix="/api/v1")
 
 
 @app.middleware("http")
+async def cors_safety_net(request: Request, call_next):
+    """Ensure CORS headers are applied consistently, including failures."""
+    origin = request.headers.get("origin")
+    is_api_request = request.url.path.startswith("/api/")
+    requested_method = request.headers.get("access-control-request-method")
+
+    if request.method == "OPTIONS" and requested_method:
+        if settings.is_allowed_origin(origin):
+            response = Response(status_code=status.HTTP_200_OK)
+            request_headers = request.headers.get("access-control-request-headers")
+            response.headers["Access-Control-Allow-Methods"] = (
+                "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+            )
+            response.headers["Access-Control-Allow-Headers"] = (
+                request_headers if request_headers else "*"
+            )
+            return _apply_cors_headers(request, response)
+        if origin and is_api_request:
+            logger.warning(
+                "CORS preflight denied: origin=%s method=%s path=%s",
+                origin,
+                requested_method,
+                request.url.path,
+            )
+        return Response(status_code=status.HTTP_403_FORBIDDEN)
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception("Unhandled pipeline exception before response generation")
+        response = JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=_build_error_response(
+                code="INTERNAL_SERVER_ERROR",
+                message="Error interno del servidor",
+                detail=None,
+            ),
+        )
+
+    if origin and is_api_request and not settings.is_allowed_origin(origin):
+        logger.warning(
+            "CORS origin denied: origin=%s method=%s path=%s",
+            origin,
+            request.method,
+            request.url.path,
+        )
+
+    return _apply_cors_headers(request, response)
+
+
+@app.middleware("http")
 async def log_requests(request: Request, call_next):
     """Log HTTP method, path, status and latency for each request."""
     started_at = perf_counter()
@@ -175,12 +235,7 @@ async def log_requests(request: Request, call_next):
                 detail=None,
             ),
         )
-        origin = request.headers.get("origin")
-        if origin and origin in settings.cors_origins:
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Vary"] = "Origin"
-            response.headers["Access-Control-Allow-Credentials"] = "true"
-        return response
+        return _apply_cors_headers(request, response)
 
 
 @app.get("/health", tags=["health"])
@@ -190,7 +245,7 @@ async def healthcheck() -> dict[str, str]:
 
 
 @app.exception_handler(AppException)
-async def handle_app_exception(_: Request, exc: AppException) -> JSONResponse:
+async def handle_app_exception(request: Request, exc: AppException) -> JSONResponse:
     """Map domain exceptions to a consistent API response."""
     status_code = status.HTTP_400_BAD_REQUEST
     if exc.code in {"UNAUTHORIZED", "INVALID_TOKEN"}:
@@ -202,7 +257,7 @@ async def handle_app_exception(_: Request, exc: AppException) -> JSONResponse:
     elif exc.code in {"CONFLICT", "EMAIL_ALREADY_EXISTS"}:
         status_code = status.HTTP_409_CONFLICT
 
-    return JSONResponse(
+    response = JSONResponse(
         status_code=status_code,
         content=_build_error_response(
             code=exc.code,
@@ -210,23 +265,25 @@ async def handle_app_exception(_: Request, exc: AppException) -> JSONResponse:
             detail=None,
         ),
     )
+    return _apply_cors_headers(request, response)
 
 
 @app.exception_handler(HTTPException)
-async def handle_http_exception(_: Request, exc: HTTPException) -> JSONResponse:
+async def handle_http_exception(request: Request, exc: HTTPException) -> JSONResponse:
     """Normalize FastAPI HTTPException to a single error contract."""
     code, message, detail = _normalize_http_exception_detail(
         exc.status_code, exc.detail
     )
-    return JSONResponse(
+    response = JSONResponse(
         status_code=exc.status_code,
         content=_build_error_response(code=code, message=message, detail=detail),
     )
+    return _apply_cors_headers(request, response)
 
 
 @app.exception_handler(RequestValidationError)
 async def handle_request_validation_error(
-    _: Request, exc: RequestValidationError
+    request: Request, exc: RequestValidationError
 ) -> JSONResponse:
     """Normalize request body/query/path validation errors."""
     issues = []
@@ -241,7 +298,7 @@ async def handle_request_validation_error(
             }
         )
 
-    return JSONResponse(
+    response = JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content=_build_error_response(
             code="VALIDATION_ERROR",
@@ -249,13 +306,14 @@ async def handle_request_validation_error(
             detail=issues,
         ),
     )
+    return _apply_cors_headers(request, response)
 
 
 @app.exception_handler(Exception)
-async def handle_unexpected_exception(_: Request, exc: Exception) -> JSONResponse:
+async def handle_unexpected_exception(request: Request, exc: Exception) -> JSONResponse:
     """Fallback error handler to avoid leaking unstructured 500 errors."""
     logger.exception("Unhandled exception: %s", exc)
-    return JSONResponse(
+    response = JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content=_build_error_response(
             code="INTERNAL_SERVER_ERROR",
@@ -263,3 +321,4 @@ async def handle_unexpected_exception(_: Request, exc: Exception) -> JSONRespons
             detail=None,
         ),
     )
+    return _apply_cors_headers(request, response)

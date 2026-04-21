@@ -1,8 +1,10 @@
 """Application bootstrap configuration endpoints."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Request
 
 from app.config import settings
+from app.dependencies import require_roles
+from app.models.user import User
 from app.schemas.auth import AppConfigResponse
 
 
@@ -24,3 +26,19 @@ async def get_app_config() -> AppConfigResponse:
             "storage_r2": settings.storage_backend == "r2",
         },
     )
+
+
+@router.get("/cors-diagnostics")
+async def get_cors_diagnostics(
+    request: Request,
+    _: User = Depends(require_roles("platform_admin")),
+) -> dict:
+    """Return CORS diagnostics for troubleshooting from trusted admin clients."""
+    origin = request.headers.get("origin")
+    return {
+        "environment": settings.environment,
+        "request_origin": origin,
+        "allowed": settings.is_allowed_origin(origin),
+        "configured_origins": settings.cors_origins,
+        "configured_origins_count": len(settings.cors_origins),
+    }
