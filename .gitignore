@@ -31,5 +31,6 @@ test_*/
 uploads/
 
 # env files
-.env
+.env*
+!.env.example
 !.env.production
