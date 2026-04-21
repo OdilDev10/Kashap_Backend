@@ -116,9 +116,14 @@ async def get_admin_user_kpis(
     )
     blocked = blocked_result.scalar() or 0
 
+    platform_admins_result = await session.execute(
+        select(func.count(User.id)).where(User.role == "platform_admin")
+    )
+    platform_admins = platform_admins_result.scalar() or 0
+
     return {
-        "total": total,
-        "active": active,
-        "inactive": inactive,
-        "blocked": blocked,
+        "total_users": total,
+        "active_users": active,
+        "inactive_users": inactive,
+        "platform_admins": platform_admins,
     }

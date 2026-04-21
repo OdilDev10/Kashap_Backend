@@ -35,13 +35,21 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """Initialize database (create tables)."""
+    """Initialize database (create tables and apply backward-compatible fixes)."""
     from app.db.base import Base
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         # Backward-compatible schema fix for environments with existing table
         # created before `ClientBankAccount.balance` was added to the model.
+        await conn.execute(
+            text(
+                """
+                ALTER TABLE IF EXISTS users
+                ADD COLUMN IF NOT EXISTS photo_url VARCHAR(500)
+                """
+            )
+        )
         await conn.execute(
             text(
                 """

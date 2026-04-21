@@ -105,3 +105,47 @@ class TenantMixin:
         nullable=True,
         index=True,
     )
+
+
+class LifecycleMixin:
+    """Common lifecycle/state fields for account-level entities.
+
+    This mixin centralizes typical lifecycle markers so models can share a
+    consistent contract when needed:
+    - blocked/disabled flags + timestamps
+    - deletion request/schedule timestamps
+    """
+
+    is_blocked: Mapped[bool] = mapped_column(
+        nullable=False,
+        default=False,
+    )
+
+    blocked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+    )
+
+    is_disabled: Mapped[bool] = mapped_column(
+        nullable=False,
+        default=False,
+    )
+
+    disabled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+    )
+
+    deletion_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+    )
+
+    scheduled_deletion_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+    )

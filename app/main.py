@@ -19,6 +19,7 @@ from app.core.exceptions import AppException
 from app.db.session import close_db, init_db
 from app.services.ocr_service import initialize_ocr, close_ocr
 from app.services.startup_seed import run_startup_seed
+from app.middleware.audit import AuditMiddleware
 
 logger = logging.getLogger("app.http")
 logger.setLevel(logging.INFO)
@@ -129,6 +130,8 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+app.add_middleware(AuditMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
