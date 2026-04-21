@@ -1,30 +1,29 @@
 FROM python:3.11-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    libpq-dev gcc git \
-    libgl1-mesa-glx libglib2.0-0 \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    libpq5 \
+    libpq-dev \
+    gcc \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv
+COPY pyproject.toml .
 RUN pip install --no-cache-dir uv
-
-# Copy pyproject.toml
-COPY pyproject.toml ./
-
-# Install dependencies with uv
 RUN uv pip install --system -e ".[dev]"
 
-# Pre-download PaddleOCR models to avoid first-run slowness
 RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='es', use_gpu=False)" || true
 
-# Copy application
 COPY . .
 
-# Expose port
 EXPOSE 8000
 
-# Run FastAPI
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=5 \
+    CMD curl -fsS http://127.0.0.1:8000/health || exit 1
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
