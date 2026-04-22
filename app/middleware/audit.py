@@ -14,6 +14,16 @@ from app.core.security import decode_token
 
 AUDITABLE_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
 
+
+def _determine_user_type(role: str, lender_id: UUID | None) -> str | None:
+    """Determine user type based on role and lender_id."""
+    if role == "platform_admin":
+        return "admin"
+    if lender_id:
+        return "lender"
+    return "client"
+
+
 AUDITABLE_PATHS = {
     "/api/v1/auth/login": ("auth", "login"),
     "/api/v1/auth/logout": ("auth", "logout"),
@@ -43,32 +53,41 @@ def get_client_ip(request: Request) -> str | None:
 
 async def get_user_info_from_request(
     request: Request,
-) -> tuple[UUID | None, str | None, str | None, UUID | None]:
-    """Extract user info from request.state if set by auth middleware."""
-    user_id = getattr(request.state, "user_id", None)
-    user_email = getattr(request.state, "user_email", None)
-    user_name = getattr(request.state, "user_name", None)
-    lender_id = getattr(request.state, "lender_id", None)
-    return user_id, user_email, user_name, lender_id
+) -> tuple[UUID | None, str | None, str | None, UUID | None, str | None]:
+    """Extract login user metadata from request body for /auth/login."""
+    if request.url.path != "/api/v1/auth/login":
+        return None, None, None, None, None
+
+    try:
+        body = await request.body()
+        if not body:
+            return None, None, None, None, None
+        payload = json.loads(body.decode("utf-8") if isinstance(body, bytes) else body)
+        email = payload.get("email")
+        if email:
+            return None, str(email), None, None, None
+    except Exception:
+        pass
+    return None, None, None, None, None
 
 
 def get_user_info_from_authorization_header(
     request: Request,
-) -> tuple[UUID | None, str | None, str | None, UUID | None]:
+) -> tuple[UUID | None, str | None, str | None, UUID | None, str | None]:
     """Extract user info from bearer access token when request.state is empty."""
     auth_header = request.headers.get("authorization")
     if not auth_header:
-        return None, None, None, None
+        return None, None, None, None, None
 
     try:
         scheme, token = auth_header.split(" ", 1)
         if scheme.lower() != "bearer" or not token:
-            return None, None, None, None
+            return None, None, None, None, None
         claims = decode_token(token)
         if claims.get("type") != "access":
-            return None, None, None, None
+            return None, None, None, None, None
     except Exception:
-        return None, None, None, None
+        return None, None, None, None, None
 
     user_id = None
     lender_id = None
@@ -90,51 +109,38 @@ def get_user_info_from_authorization_header(
     last_name = str(claims.get("last_name") or "").strip()
     full_name = f"{first_name} {last_name}".strip() or None
 
-    return user_id, (str(email) if email else None), full_name, lender_id
+    role = claims.get("role", "")
+    user_type = _determine_user_type(role, lender_id)
 
-
-async def get_login_user_info_from_request(
-    request: Request,
-) -> tuple[UUID | None, str | None, str | None, UUID | None]:
-    """Extract login user metadata from request body for /auth/login."""
-    if request.url.path != "/api/v1/auth/login":
-        return None, None, None, None
-
-    try:
-        body = await request.body()
-        if not body:
-            return None, None, None, None
-        payload = json.loads(body.decode("utf-8") if isinstance(body, bytes) else body)
-        email = payload.get("email")
-        if email:
-            return None, str(email), None, None
-    except Exception:
-        pass
-    return None, None, None, None
+    return user_id, (str(email) if email else None), full_name, lender_id, user_type
 
 
 def get_login_user_info_cached(
     request: Request,
-) -> tuple[UUID | None, str | None, str | None, UUID | None]:
+) -> tuple[UUID | None, str | None, str | None, UUID | None, str | None]:
     """Get cached login info from request state (captured before body was consumed)."""
     if request.url.path != "/api/v1/auth/login":
-        return None, None, None, None
+        return None, None, None, None, None
     email = getattr(request.state, "_login_email", None)
+    role = getattr(request.state, "_login_role", None)
+    user_type = "client"
+    if role:
+        user_type = _determine_user_type(role, None)
     if email:
-        return None, str(email), None, None
-    return None, None, None, None
+        return None, str(email), None, None, user_type
+    return None, None, None, None, None
 
 
 def get_login_user_info_from_response(
     path: str, response: Response
-) -> tuple[UUID | None, str | None, str | None, UUID | None]:
+) -> tuple[UUID | None, str | None, str | None, UUID | None, str | None]:
     """Extract login user metadata from successful /auth/login response body."""
     if path != "/api/v1/auth/login":
-        return None, None, None, None
+        return None, None, None, None, None
 
     body = getattr(response, "body", None)
     if not body:
-        return None, None, None, None
+        return None, None, None, None, None
 
     try:
         payload = json.loads(body.decode("utf-8") if isinstance(body, bytes) else body)
@@ -145,9 +151,11 @@ def get_login_user_info_from_response(
         first_name = str(user.get("first_name") or "").strip()
         last_name = str(user.get("last_name") or "").strip()
         user_name = f"{first_name} {last_name}".strip() or None
-        return user_id, (str(email) if email else None), user_name, lender_id
+        role = user.get("role", "")
+        user_type = _determine_user_type(role, lender_id)
+        return user_id, (str(email) if email else None), user_name, lender_id, user_type
     except Exception:
-        return None, None, None, None
+        return None, None, None, None, None
 
 
 def extract_resource(path: str, method: str) -> tuple[str, str]:
@@ -217,7 +225,9 @@ class AuditMiddleware(BaseHTTPMiddleware):
         if response.status_code >= 400:
             return response
 
-        user_id, user_email, user_name, lender_id = get_login_user_info_cached(request)
+        user_id, user_email, user_name, lender_id, user_type = (
+            get_login_user_info_cached(request)
+        )
 
         if user_id is None and hasattr(request.state, "current_user"):
             cu = request.state.current_user
@@ -229,18 +239,20 @@ class AuditMiddleware(BaseHTTPMiddleware):
                     or None
                 )
                 lender_id = getattr(cu, "lender_id", None)
+                role = getattr(cu, "role", "")
+                user_type = _determine_user_type(role, lender_id)
 
         if user_id is None:
-            user_id, user_email, user_name, lender_id = (
+            user_id, user_email, user_name, lender_id, user_type = (
                 get_user_info_from_authorization_header(request)
             )
 
         if user_id is None and path == "/api/v1/auth/login":
             login_info = get_login_user_info_cached(request)
             if login_info[1]:
-                user_id, user_email, user_name, lender_id = login_info
+                user_id, user_email, user_name, lender_id, user_type = login_info
             else:
-                user_id, user_email, user_name, lender_id = (
+                user_id, user_email, user_name, lender_id, user_type = (
                     get_login_user_info_from_response(path, response)
                 )
 
@@ -263,6 +275,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
                     resource_id=None,
                     description=f"{method} {path}",
                     user_id=user_id,
+                    user_type=user_type,
                     user_email=user_email,
                     user_name=user_name,
                     lender_id=lender_id,

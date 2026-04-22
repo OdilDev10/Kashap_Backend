@@ -72,6 +72,11 @@ class AuditLog(Base):
         nullable=True,
     )
 
+    user_type: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
     # Which tenant/lender
     lender_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
