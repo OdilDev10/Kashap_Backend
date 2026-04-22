@@ -5,10 +5,12 @@ from collections.abc import Callable
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.core.exceptions import ForbiddenException, UnauthorizedException
 from app.core.security import decode_token
 from app.db.session import get_db
+from app.models.lender import Lender
 from app.models.user import User
 from app.repositories.user_repo import UserRepository
 
@@ -53,12 +55,29 @@ async def get_current_claims(
     return payload
 
 
-async def get_lender_context(current_user: User = Depends(get_current_user)) -> str:
-    """Return the authenticated lender context when available."""
-    if current_user.lender_id is None:
+async def get_lender_context(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> str:
+    """Return lender context for lender-scoped routes.
+
+    Standard lender users must have a lender_id.
+    Platform admins may operate lender-scoped views and are auto-scoped
+    to the first available lender when they are not directly linked.
+    """
+    if current_user.lender_id is not None:
+        return str(current_user.lender_id)
+
+    user_role = getattr(current_user.role, "value", current_user.role)
+    if user_role != "platform_admin":
         raise ForbiddenException("Authenticated user is not scoped to a lender")
 
-    return str(current_user.lender_id)
+    lender_result = await session.execute(select(Lender.id).limit(1))
+    lender_id = lender_result.scalar_one_or_none()
+    if lender_id is None:
+        raise ForbiddenException("No lender available for platform admin scope")
+
+    return str(lender_id)
 
 
 def require_roles(*allowed_roles: str) -> Callable[[User], User]:
