@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, DateTime, Enum, ForeignKey
+from sqlalchemy import String, DateTime, Enum, ForeignKey, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 import uuid
@@ -35,6 +35,8 @@ class User(Base, BaseModel):
         String(255), nullable=False, unique=True, index=True
     )
     phone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    document_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    document_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     photo_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     account_type: Mapped[AccountType] = mapped_column(
@@ -46,6 +48,16 @@ class User(Base, BaseModel):
     status: Mapped[UserStatus] = mapped_column(
         Enum(UserStatus), default=UserStatus.ACTIVE
     )
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    verified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    verified_by: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    verification_notes: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

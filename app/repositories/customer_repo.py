@@ -63,3 +63,11 @@ class CustomerRepository(BaseRepository[Customer]):
             stmt = stmt.where(Customer.id != exclude_id)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none() is not None
+
+    async def phone_exists(self, phone: str, exclude_id: UUID | None = None) -> bool:
+        """Check if phone exists (optionally excluding a specific customer)."""
+        stmt = select(Customer).where(Customer.phone == phone.strip())
+        if exclude_id:
+            stmt = stmt.where(Customer.id != exclude_id)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none() is not None

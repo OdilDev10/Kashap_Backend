@@ -123,7 +123,7 @@ BASE_TEMPLATE = """
         <div class="footer">
             <p>Este correo fue enviado por {app_name}</p>
             <p>Si no solicitaste este correo, puedes ignorarlo de forma segura.</p>
-            <p>&copy; 2026 {app_name}. Todos los derechos reservados.</p>
+            <p>&copy; 2026 {app_name}. Todos los derechos reservados. 🇩🇴</p>
         </div>
     </div>
 </body>

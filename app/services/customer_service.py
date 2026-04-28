@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import CustomerStatus
 from app.core.exceptions import ConflictException, ValidationException, NotFoundException
+from app.core.identity_validation import normalize_cedula, normalize_phone
 from app.models.customer import Customer
 from app.repositories.customer_repo import CustomerRepository
 
@@ -30,7 +31,10 @@ class CustomerService:
     ) -> Customer:
         """Create a new customer within a lender scope."""
         email = email.lower().strip()
-        document_number = document_number.strip()
+        phone = normalize_phone(phone)
+        if document_type.strip().lower() not in {"cedula", "cédula"}:
+            raise ValidationException("Para clientes, la cédula es obligatoria")
+        document_number = normalize_cedula(document_number)
 
         if len(first_name.strip()) < 2:
             raise ValidationException("First name must be at least 2 characters")
@@ -40,6 +44,8 @@ class CustomerService:
             raise ConflictException("Email already in use by another customer")
         if await self.customer_repo.document_exists(document_number):
             raise ConflictException("Document number already in use")
+        if await self.customer_repo.phone_exists(phone):
+            raise ConflictException("Phone already in use by another customer")
 
         customer = await self.customer_repo.create({
             "lender_id": lender_id,
@@ -47,7 +53,7 @@ class CustomerService:
             "last_name": last_name.strip(),
             "document_type": document_type.strip(),
             "document_number": document_number,
-            "phone": phone.strip(),
+            "phone": phone,
             "email": email,
             "status": CustomerStatus.ACTIVE,
             "credit_limit": credit_limit,

@@ -1,9 +1,10 @@
 """Lender models - Financieras y prestamistas."""
 
 import uuid
+from decimal import Decimal
 from typing import Optional, TYPE_CHECKING
-from datetime import datetime
-from sqlalchemy import String, DateTime, Date, Enum, Boolean, ForeignKey
+from datetime import datetime, date
+from sqlalchemy import String, DateTime, Date, Enum, Boolean, ForeignKey, Numeric, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
@@ -31,6 +32,7 @@ class Lender(Base, BaseModel):
     document_number: Mapped[str] = mapped_column(
         String(50), nullable=False, unique=True
     )
+    owner_cedula: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     phone: Mapped[str] = mapped_column(String(20), nullable=False)
     address_line: Mapped[Optional[str]] = mapped_column(String(255))
@@ -40,6 +42,14 @@ class Lender(Base, BaseModel):
     )
     subscription_plan: Mapped[Optional[str]] = mapped_column(String(50))
     rejection_reason: Mapped[Optional[str]] = mapped_column(String(500))
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    verified_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    verification_notes: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     subscription_starts_at: Mapped[Optional[datetime]] = mapped_column(Date)
     subscription_ends_at: Mapped[Optional[datetime]] = mapped_column(Date)
 
@@ -89,6 +99,21 @@ class LenderInvitation(Base, BaseModel):
         nullable=False,
     )
     status: Mapped[str] = mapped_column(String(50), default="active")
+    loan_principal_amount: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(12, 2), nullable=True
+    )
+    loan_interest_rate: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(5, 2), nullable=True
+    )
+    loan_installments_count: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True
+    )
+    loan_frequency: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    loan_first_due_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    loan_purpose: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    invitee_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    invitee_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    invitee_phone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
 
     lender: Mapped[Lender] = relationship(back_populates="invitations")
 

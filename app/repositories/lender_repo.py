@@ -28,6 +28,18 @@ class LenderRepository(BaseRepository[Lender]):
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def owner_cedula_exists(self, owner_cedula: str) -> bool:
+        """Check if owner cedula is already registered in another lender."""
+        stmt = select(Lender.id).where(Lender.owner_cedula == owner_cedula.strip())
+        result = await self.session.execute(stmt.limit(1))
+        return result.scalar_one_or_none() is not None
+
+    async def phone_exists(self, phone: str) -> bool:
+        """Check if lender phone already exists."""
+        stmt = select(Lender.id).where(Lender.phone == phone.strip())
+        result = await self.session.execute(stmt.limit(1))
+        return result.scalar_one_or_none() is not None
+
     async def get_by_status(self, status: LenderStatus) -> list[Lender]:
         """Get all lenders with specific status."""
         stmt = select(Lender).where(Lender.status == status)

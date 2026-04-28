@@ -50,6 +50,8 @@ async def register(
         password=request_data.password,
         first_name=request_data.first_name,
         last_name=request_data.last_name,
+        phone=request_data.phone,
+        cedula=request_data.cedula,
     )
     return RegisterResponse(**result)
 
@@ -74,8 +76,7 @@ async def register_customer(
         first_name=first_name,
         last_name=last_name,
         lender_id=request.lender_id,
-        document_type=request.document_type,
-        document_number=request.document_number,
+        cedula=request.cedula or "",
         phone=request.phone,
     )
     return RegistrationEntityResponse(**result)
@@ -96,9 +97,10 @@ async def register_lender(
         email=request.email,
         password=request.password,
         legal_name=request.legal_name,
+        commercial_name=request.commercial_name,
         lender_type=request.lender_type,
-        document_type=request.document_type,
-        document_number=request.document_number,
+        rnc_number=request.rnc_number or "",
+        owner_cedula=request.owner_cedula or "",
         phone=request.phone,
     )
     return RegistrationEntityResponse(**result)

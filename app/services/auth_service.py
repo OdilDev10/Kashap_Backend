@@ -27,6 +27,11 @@ from app.core.permissions import get_permissions_for_role
 from app.services.email_service import email_service
 from app.services.token_blacklist import token_blacklist
 from app.config import settings
+from app.core.identity_validation import (
+    normalize_cedula,
+    normalize_phone,
+    normalize_rnc,
+)
 import random
 import string
 
@@ -66,10 +71,18 @@ class AuthService:
         }
 
     async def register(
-        self, email: str, password: str, first_name: str, last_name: str
+        self,
+        email: str,
+        password: str,
+        first_name: str,
+        last_name: str,
+        phone: str,
+        cedula: str,
     ) -> dict:
         """Register new user with email verification."""
         email = email.lower().strip()
+        phone = normalize_phone(phone)
+        cedula = normalize_cedula(cedula)
 
         # Validate password
         if len(password) < 8:
@@ -80,6 +93,25 @@ class AuthService:
             raise ConflictException(
                 f"Email {email} is already registered", code="EMAIL_ALREADY_EXISTS"
             )
+        if (
+            await self.customer_repo.email_exists(email)
+            or await self.lender_repo.get_by_email(email)
+        ):
+            raise ConflictException(
+                f"Email {email} is already registered", code="EMAIL_ALREADY_EXISTS"
+            )
+        if await self.user_repo.phone_exists(phone):
+            raise ConflictException(
+                f"Phone {phone} is already registered", code="PHONE_EXISTS"
+            )
+        if await self.user_repo.document_exists(cedula):
+            raise ConflictException(
+                f"Document {cedula} is already registered", code="DOCUMENT_EXISTS"
+            )
+        if await self.customer_repo.document_exists(cedula):
+            raise ConflictException(
+                f"Document {cedula} is already registered", code="DOCUMENT_EXISTS"
+            )
 
         # Create unverified user
         user = await self.user_repo.create_user(
@@ -87,6 +119,9 @@ class AuthService:
             password_hash=hash_password(password),
             first_name=first_name,
             last_name=last_name,
+            phone=phone,
+            document_type="Cedula",
+            document_number=cedula,
             account_type=AccountType.INTERNAL,
             status="inactive",  # User is inactive until email is verified
         )
@@ -480,13 +515,13 @@ class AuthService:
         first_name: str,
         last_name: str,
         lender_id: str,
-        document_type: str,
-        document_number: str,
+        cedula: str,
         phone: str,
     ) -> dict:
         """Register new customer (cliente that borrows money)."""
         email = email.lower().strip()
-        document_number = document_number.strip()
+        phone = normalize_phone(phone)
+        cedula = normalize_cedula(cedula)
 
         # Validate inputs
         if len(password) < 8:
@@ -499,6 +534,14 @@ class AuthService:
             raise ValidationException("Last name must be at least 2 characters")
 
         # Check if customer already exists
+        if await self.user_repo.email_exists(email) or await self.lender_repo.get_by_email(
+            email
+        ):
+            raise ConflictException(
+                f"Email {email} already exists",
+                code="EMAIL_ALREADY_EXISTS",
+            )
+
         existing_customer = await self.customer_repo.get_by_email(email)
         if existing_customer:
             raise ConflictException(
@@ -506,10 +549,15 @@ class AuthService:
                 code="EMAIL_ALREADY_EXISTS",
             )
 
-        if await self.customer_repo.document_exists(document_number):
+        if await self.customer_repo.document_exists(cedula):
             raise ConflictException(
-                f"Customer with document {document_number} already exists",
+                f"Customer with document {cedula} already exists",
                 code="DOCUMENT_EXISTS",
+            )
+        if await self.customer_repo.phone_exists(phone):
+            raise ConflictException(
+                f"Customer with phone {phone} already exists",
+                code="PHONE_EXISTS",
             )
 
         # Create customer record
@@ -520,8 +568,8 @@ class AuthService:
                 "last_name": last_name,
                 "email": email,
                 "phone": phone,
-                "document_type": document_type,
-                "document_number": document_number,
+                "document_type": "Cedula",
+                "document_number": cedula,
                 "status": "active",  # Customers start as active
             }
         )
@@ -557,15 +605,17 @@ class AuthService:
         email: str,
         password: str,
         legal_name: str,
+        commercial_name: str,
         lender_type: str,
-        document_type: str,
-        document_number: str,
+        rnc_number: str,
+        owner_cedula: str,
         phone: str,
-        commercial_name: str | None = None,
     ) -> dict:
         """Register new lender (prestamista/financiera)."""
         email = email.lower().strip()
-        document_number = document_number.strip()
+        phone = normalize_phone(phone)
+        rnc_number = normalize_rnc(rnc_number)
+        owner_cedula = normalize_cedula(owner_cedula)
 
         # Validate inputs
         if len(password) < 8:
@@ -577,39 +627,46 @@ class AuthService:
         if lender_type not in ["financial", "individual"]:
             raise ValidationException("Lender type must be 'financial' or 'individual'")
 
-        # Validate document based on lender type
-        if lender_type == "individual":
-            if document_type.lower() != "cedula":
-                raise ValidationException(
-                    "Individual lenders must provide 'Cedula' as document type"
-                )
-        else:  # financial
-            if document_type.lower() not in ["rnc", "cedula"]:
-                raise ValidationException(
-                    "Financial lenders must provide 'RNC' or 'Cedula' as document type"
-                )
-
         # Check if lender already exists
+        if await self.user_repo.email_exists(email) or await self.customer_repo.email_exists(
+            email
+        ):
+            raise ConflictException(
+                f"Email {email} already exists",
+                code="EMAIL_ALREADY_EXISTS",
+            )
+
         if await self.lender_repo.get_by_email(email):
             raise ConflictException(
                 f"Lender with email {email} already exists",
                 code="EMAIL_ALREADY_EXISTS",
             )
 
-        if await self.lender_repo.get_by_document_number(document_number):
+        if await self.lender_repo.get_by_document_number(rnc_number):
             raise ConflictException(
-                f"Lender with document {document_number} already exists",
+                f"Lender with RNC {rnc_number} already exists",
                 code="DOCUMENT_EXISTS",
+            )
+        if await self.lender_repo.owner_cedula_exists(owner_cedula):
+            raise ConflictException(
+                f"Lender owner with cedula {owner_cedula} already exists",
+                code="DOCUMENT_EXISTS",
+            )
+        if await self.lender_repo.phone_exists(phone):
+            raise ConflictException(
+                f"Lender with phone {phone} already exists",
+                code="PHONE_EXISTS",
             )
 
         # Create lender
         lender = await self.lender_repo.create(
             {
                 "legal_name": legal_name,
-                "commercial_name": commercial_name or legal_name,
+                "commercial_name": commercial_name.strip() or legal_name,
                 "lender_type": lender_type,
-                "document_type": document_type,
-                "document_number": document_number,
+                "document_type": "RNC",
+                "document_number": rnc_number,
+                "owner_cedula": owner_cedula,
                 "email": email,
                 "phone": phone,
                 "status": "pending",  # Lenders start as pending

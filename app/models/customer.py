@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional, TYPE_CHECKING
 
-from sqlalchemy import String, Date, DateTime, Enum, ForeignKey, Numeric
+from sqlalchemy import String, Date, DateTime, Enum, ForeignKey, Numeric, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
@@ -48,6 +48,14 @@ class Customer(Base, BaseModel):
     province: Mapped[Optional[str]] = mapped_column(String(100))
     country: Mapped[Optional[str]] = mapped_column(String(100), default="DO")
     status: Mapped[CustomerStatus] = mapped_column(Enum(CustomerStatus), default=CustomerStatus.ACTIVE)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    verified_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    verification_notes: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     credit_limit: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
 
     # Relationships

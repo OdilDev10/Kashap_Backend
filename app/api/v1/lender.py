@@ -1,10 +1,13 @@
 """Lender dashboard API - dashboard stats, loans, customers, payments, users."""
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from datetime import date
 import secrets
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from pydantic import EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, or_
 
@@ -31,6 +34,7 @@ from app.services.dashboard_service import DashboardService
 from app.services.payment_service import PaymentService
 from app.services.storage_service import storage_service
 from app.core.association_code import create_association_code
+from app.services.email_service import email_service
 
 
 router = APIRouter(prefix="/lender", tags=["lender"])
@@ -141,6 +145,15 @@ class RejectPaymentRequest(BaseModel):
 
 class CreateInvitationRequest(BaseModel):
     expires_in_days: int = 30
+    invitee_name: str = Field(..., min_length=2, max_length=255)
+    invitee_email: EmailStr
+    invitee_phone: str | None = Field(default=None, min_length=7, max_length=30)
+    principal_amount: Decimal = Field(..., gt=0)
+    interest_rate: Decimal = Field(..., ge=0, le=100)
+    installments_count: int = Field(..., ge=1, le=120)
+    frequency: str = Field(..., min_length=3, max_length=20)
+    first_due_date: date
+    purpose: str | None = Field(default=None, max_length=500)
 
 
 @router.get("/invitations")
@@ -191,6 +204,9 @@ async def list_lender_invitations(
             Customer.email.ilike(f"%{term}%"),
             Customer.first_name.ilike(f"%{term}%"),
             Customer.last_name.ilike(f"%{term}%"),
+            LenderInvitation.invitee_name.ilike(f"%{term}%"),
+            LenderInvitation.invitee_email.ilike(f"%{term}%"),
+            LenderInvitation.invitee_phone.ilike(f"%{term}%"),
         )
         base_query = base_query.where(search_filter)
         count_query = count_query.where(search_filter)
@@ -231,6 +247,21 @@ async def list_lender_invitations(
                 "created_at": invitation.created_at.isoformat()
                 if invitation.created_at
                 else None,
+                "loan_principal_amount": float(invitation.loan_principal_amount)
+                if invitation.loan_principal_amount is not None
+                else None,
+                "loan_interest_rate": float(invitation.loan_interest_rate)
+                if invitation.loan_interest_rate is not None
+                else None,
+                "loan_installments_count": invitation.loan_installments_count,
+                "loan_frequency": invitation.loan_frequency,
+                "loan_first_due_date": invitation.loan_first_due_date.isoformat()
+                if invitation.loan_first_due_date
+                else None,
+                "loan_purpose": invitation.loan_purpose,
+                "invitee_name": invitation.invitee_name,
+                "invitee_email": invitation.invitee_email,
+                "invitee_phone": invitation.invitee_phone,
             }
         )
 
@@ -248,6 +279,12 @@ async def create_lender_invitation(
 ) -> dict:
     """Generate a new invitation code for customer linking."""
     expires_in_days = max(1, min(request.expires_in_days, 30))
+    frequency = request.frequency.strip().lower()
+    if frequency not in {"weekly", "biweekly", "monthly"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Frecuencia inválida. Usa weekly, biweekly o monthly",
+        )
     expires_at = datetime.now(UTC) + timedelta(days=expires_in_days)
     invitation_code = secrets.token_urlsafe(18)[:24].upper()
     while True:
@@ -266,10 +303,59 @@ async def create_lender_invitation(
         expires_at=expires_at,
         created_by_user_id=current_user.id,
         status="active",
+        invitee_name=request.invitee_name.strip(),
+        invitee_email=str(request.invitee_email).strip().lower(),
+        invitee_phone=request.invitee_phone.strip() if request.invitee_phone else None,
+        loan_principal_amount=request.principal_amount,
+        loan_interest_rate=request.interest_rate,
+        loan_installments_count=request.installments_count,
+        loan_frequency=frequency,
+        loan_first_due_date=request.first_due_date,
+        loan_purpose=request.purpose,
     )
     session.add(invitation)
     await session.commit()
     await session.refresh(invitation)
+
+    existing_customer_result = await session.execute(
+        select(Customer.id)
+        .where(Customer.email == invitation.invitee_email)
+        .limit(1)
+    )
+    invitee_registered = existing_customer_result.scalar_one_or_none() is not None
+
+    email_sent: bool | None = None
+    if invitation.invitee_email:
+        subject = "Invitación de vinculación y préstamo - OptiCredit"
+        register_hint = (
+            "Solo debes iniciar sesión en tu cuenta y colocar el código."
+            if invitee_registered
+            else "Si aún no tienes cuenta, primero regístrate en la plataforma y luego coloca este código."
+        )
+        html = f"""
+        <div style="font-family: Arial, sans-serif; line-height: 1.5;">
+          <h2>Hola {invitation.invitee_name or "cliente"},</h2>
+          <p>Tu prestamista te ha enviado una invitación de vinculación con un préstamo preacordado.</p>
+          <p><strong>Código de vinculación:</strong> {invitation.code}</p>
+          <p><strong>Vigencia:</strong> {invitation.expires_at.strftime("%Y-%m-%d %H:%M UTC")}</p>
+          <hr />
+          <p><strong>Monto:</strong> RD$ {float(invitation.loan_principal_amount or 0):,.2f}</p>
+          <p><strong>Interés:</strong> {float(invitation.loan_interest_rate or 0):.2f}%</p>
+          <p><strong>Cuotas:</strong> {invitation.loan_installments_count or 0}</p>
+          <p><strong>Frecuencia:</strong> {invitation.loan_frequency or "N/A"}</p>
+          <p><strong>Primer vencimiento:</strong> {invitation.loan_first_due_date.isoformat() if invitation.loan_first_due_date else "N/A"}</p>
+          <p><strong>Propósito:</strong> {invitation.loan_purpose or "N/A"}</p>
+          <hr />
+          <p>{register_hint}</p>
+          <p>Ingresa este código en tu panel de cliente para completar la vinculación.</p>
+        </div>
+        """
+        email_sent = await email_service.send_email(
+            to_email=invitation.invitee_email,
+            subject=subject,
+            body=html,
+            is_html=True,
+        )
 
     return {
         "id": str(invitation.id),
@@ -277,6 +363,23 @@ async def create_lender_invitation(
         "status": invitation.status,
         "expires_at": invitation.expires_at.isoformat(),
         "created_at": invitation.created_at.isoformat() if invitation.created_at else None,
+        "loan_principal_amount": float(invitation.loan_principal_amount)
+        if invitation.loan_principal_amount is not None
+        else None,
+        "loan_interest_rate": float(invitation.loan_interest_rate)
+        if invitation.loan_interest_rate is not None
+        else None,
+        "loan_installments_count": invitation.loan_installments_count,
+        "loan_frequency": invitation.loan_frequency,
+        "loan_first_due_date": invitation.loan_first_due_date.isoformat()
+        if invitation.loan_first_due_date
+        else None,
+        "loan_purpose": invitation.loan_purpose,
+        "invitee_name": invitation.invitee_name,
+        "invitee_email": invitation.invitee_email,
+        "invitee_phone": invitation.invitee_phone,
+        "invitee_registered": invitee_registered,
+        "email_sent": email_sent,
         "message": "Invitacion creada",
     }
 

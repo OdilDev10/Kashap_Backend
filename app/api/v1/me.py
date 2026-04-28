@@ -17,7 +17,7 @@ from app.models.lender import Lender
 from app.models.lender import LenderBankAccount
 from app.models.lender import LenderInvitation
 from app.models.customer_lender_link import CustomerLenderLink
-from app.models.loan_application import LoanApplicationStatus
+from app.models.loan_application import LoanApplication, LoanApplicationStatus
 from app.core.enums import LenderStatus, LinkStatus
 from app.repositories.customer_repo import CustomerRepository
 from app.repositories.loan_repo import LoanRepository, InstallmentRepository
@@ -29,6 +29,7 @@ from app.repositories.payment_repo import (
 )
 from app.services.payment_service import PaymentService
 from app.services.voucher_service import VoucherService
+from app.services.loan_service import LoanService
 from app.core.exceptions import (
     NotFoundException,
     ForbiddenException,
@@ -561,17 +562,53 @@ async def link_with_association_code(
     if customer.lender_id is None:
         customer.lender_id = lender.id
 
+    loan_result: dict | None = None
     if invitation is not None:
         invitation.status = "used"
         invitation.used_at = now
         invitation.used_by_customer_id = customer.id
+        if (
+            invitation.loan_principal_amount is not None
+            and invitation.loan_interest_rate is not None
+            and invitation.loan_installments_count is not None
+            and invitation.loan_frequency is not None
+            and invitation.loan_first_due_date is not None
+        ):
+            loan_application = LoanApplication(
+                lender_id=lender.id,
+                customer_id=customer.id,
+                requested_amount=invitation.loan_principal_amount,
+                requested_interest_rate=invitation.loan_interest_rate,
+                requested_installments_count=invitation.loan_installments_count,
+                requested_frequency=invitation.loan_frequency,
+                purpose=invitation.loan_purpose,
+                status=LoanApplicationStatus.APPROVED,
+                reviewed_by=invitation.created_by_user_id,
+                reviewed_at=now,
+                review_notes="Aprobada automáticamente por invitación de vinculación",
+            )
+            session.add(loan_application)
+            await session.flush()
 
-    await session.commit()
+            loan_service = LoanService(session)
+            loan_result = await loan_service.create_loan_from_application(
+                application_id=str(loan_application.id),
+                lender_id=str(lender.id),
+                approved_by_user_id=str(invitation.created_by_user_id),
+                first_due_date=invitation.loan_first_due_date,
+                internal_notes="Préstamo creado desde invitación de vinculación",
+            )
+        else:
+            await session.commit()
+    else:
+        await session.commit()
 
     return {
         "message": "Vinculación completada",
         "lender_id": str(lender.id),
         "status": "linked",
+        "loan_id": loan_result.get("loan_id") if loan_result else None,
+        "loan_number": loan_result.get("loan_number") if loan_result else None,
     }
 
 

@@ -44,6 +44,18 @@ class UserRepository(BaseRepository[User]):
             kwargs["email"] = kwargs["email"].lower()
         return await self.create(kwargs)
 
+    async def phone_exists(self, phone: str) -> bool:
+        """Check if phone already exists."""
+        stmt = select(User.id).where(User.phone == phone.strip())
+        result = await self.session.execute(stmt.limit(1))
+        return result.scalar_one_or_none() is not None
+
+    async def document_exists(self, document_number: str) -> bool:
+        """Check if document number already exists."""
+        stmt = select(User.id).where(User.document_number == document_number.strip())
+        result = await self.session.execute(stmt.limit(1))
+        return result.scalar_one_or_none() is not None
+
     async def get_by_lender_and_role(self, lender_id: UUID, role: UserRole) -> list[User]:
         """Get all users with a specific role in a lender."""
         stmt = select(User).where(User.lender_id == lender_id, User.role == role)
