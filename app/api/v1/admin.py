@@ -10,8 +10,12 @@ from app.db.session import get_db
 from app.dependencies import require_roles
 from app.models.user import User
 from app.models.lender import Lender, LenderStatus
+from app.models.lender_document import LenderDocument
+from app.models.lender import LenderBankAccount
 from app.models.loan import Loan
 from app.models.customer import Customer
+from app.core.enums import LoanStatus
+from app.services.storage_service import storage_service
 from app.schemas.admin import (
     AdminLenderCard,
     AdminLenderKPIs,
@@ -20,6 +24,136 @@ from app.schemas.admin import (
 
 
 router = APIRouter(prefix="/admin/lenders", tags=["admin"])
+
+
+@router.get("/{lender_id}/detail", response_model=dict)
+async def get_lender_detail_admin(
+    lender_id: str,
+    _: User = Depends(require_roles("platform_admin")),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Get full lender detail for admin review, including legal documents."""
+    result = await session.execute(select(Lender).where(Lender.id == lender_id))
+    lender = result.scalar_one_or_none()
+    if not lender:
+        from app.core.exceptions import NotFoundException
+
+        raise NotFoundException("Lender not found")
+
+    clients_result = await session.execute(
+        select(func.count(Customer.id)).where(Customer.lender_id == str(lender.id))
+    )
+    clients_count = clients_result.scalar() or 0
+
+    loans_count_result = await session.execute(
+        select(func.count(Loan.id)).where(Loan.lender_id == str(lender.id))
+    )
+    loans_count = loans_count_result.scalar() or 0
+
+    active_loans_result = await session.execute(
+        select(func.count(Loan.id)).where(
+            Loan.lender_id == str(lender.id),
+            Loan.status == LoanStatus.ACTIVE,
+        )
+    )
+    active_loans_count = active_loans_result.scalar() or 0
+
+    portfolio_result = await session.execute(
+        select(func.sum(Loan.total_amount)).where(Loan.lender_id == str(lender.id))
+    )
+    portfolio_amount = portfolio_result.scalar() or 0
+
+    users_result = await session.execute(
+        select(User).where(User.lender_id == lender.id).order_by(User.created_at.asc())
+    )
+    users = users_result.scalars().all()
+
+    bank_accounts_result = await session.execute(
+        select(LenderBankAccount)
+        .where(LenderBankAccount.lender_id == lender.id)
+        .order_by(LenderBankAccount.is_primary.desc(), LenderBankAccount.created_at.asc())
+    )
+    bank_accounts = bank_accounts_result.scalars().all()
+
+    docs_result = await session.execute(
+        select(LenderDocument)
+        .where(LenderDocument.lender_id == lender.id)
+        .order_by(LenderDocument.created_at.desc())
+    )
+    documents = docs_result.scalars().all()
+
+    docs_payload = []
+    for doc in documents:
+        try:
+            file_url = await storage_service.generate_url(doc.file_path, expires_in=3600)
+        except Exception:
+            file_url = None
+
+        docs_payload.append(
+            {
+                "id": str(doc.id),
+                "document_type": doc.document_type,
+                "file_name": doc.file_name,
+                "file_size": doc.file_size,
+                "mime_type": doc.mime_type,
+                "status": doc.status,
+                "notes": doc.notes,
+                "created_at": doc.created_at.isoformat() if doc.created_at else None,
+                "file_url": file_url,
+            }
+        )
+
+    return {
+        "id": str(lender.id),
+        "legal_name": lender.legal_name,
+        "commercial_name": lender.commercial_name,
+        "lender_type": lender.lender_type.value
+        if hasattr(lender.lender_type, "value")
+        else str(lender.lender_type),
+        "document_type": lender.document_type,
+        "document_number": lender.document_number,
+        "email": lender.email,
+        "phone": lender.phone,
+        "address_line": lender.address_line,
+        "photo_url": lender.photo_url,
+        "status": lender.status.value if hasattr(lender.status, "value") else str(lender.status),
+        "plan": lender.subscription_plan or "basic",
+        "rejection_reason": lender.rejection_reason,
+        "registered_at": lender.created_at.isoformat() if lender.created_at else None,
+        "updated_at": lender.updated_at.isoformat() if lender.updated_at else None,
+        "metrics": {
+            "clients_count": clients_count,
+            "loans_count": loans_count,
+            "active_loans_count": active_loans_count,
+            "portfolio_amount": float(portfolio_amount) if portfolio_amount else 0.0,
+        },
+        "users": [
+            {
+                "id": str(user.id),
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "email": user.email,
+                "phone": user.phone,
+                "role": user.role.value if hasattr(user.role, "value") else str(user.role),
+                "status": user.status.value if hasattr(user.status, "value") else str(user.status),
+            }
+            for user in users
+        ],
+        "bank_accounts": [
+            {
+                "id": str(account.id),
+                "bank_name": account.bank_name,
+                "account_type": account.account_type,
+                "account_holder_name": account.account_holder_name,
+                "account_number_masked": account.account_number_masked,
+                "currency": account.currency,
+                "is_primary": account.is_primary,
+                "status": account.status,
+            }
+            for account in bank_accounts
+        ],
+        "documents": docs_payload,
+    }
 
 
 @router.get("", response_model=PaginatedAdminLendersResponse)

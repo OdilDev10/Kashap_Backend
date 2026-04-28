@@ -2,7 +2,9 @@
 
 from uuid import UUID
 from decimal import Decimal
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File
+from jose import JWTError
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
@@ -13,6 +15,7 @@ from app.models.user import User
 from app.models.customer import Customer
 from app.models.lender import Lender
 from app.models.lender import LenderBankAccount
+from app.models.lender import LenderInvitation
 from app.models.customer_lender_link import CustomerLenderLink
 from app.models.loan_application import LoanApplicationStatus
 from app.core.enums import LenderStatus, LinkStatus
@@ -32,6 +35,7 @@ from app.core.exceptions import (
     ValidationException,
 )
 from app.core.error_codes import ErrorCode, get_error_response
+from app.core.association_code import decode_association_code
 
 
 router = APIRouter(prefix="/me", tags=["customer-portal"])
@@ -49,6 +53,12 @@ class AssociationRequest(BaseModel):
     """Payload for requesting customer association to a lender."""
 
     lender_id: UUID = Field(..., description="Lender ID to associate with")
+
+
+class AssociationCodeRequest(BaseModel):
+    """Payload to link customer using lender-provided verification code."""
+
+    code: str = Field(..., min_length=10, description="Código de vinculación")
 
 
 async def _ensure_legacy_link(customer: Customer, session: AsyncSession) -> None:
@@ -482,6 +492,86 @@ async def request_association(
         "message": "Solicitud de asociación enviada",
         "lender_id": str(lender.id),
         "status": "pending",
+    }
+
+
+@router.post("/association/link-with-code")
+async def link_with_association_code(
+    request: AssociationCodeRequest,
+    customer: Customer = Depends(get_current_customer),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Link current customer to lender directly using a signed verification code."""
+    await _ensure_legacy_link(customer, session)
+
+    raw_code = request.code.strip()
+    if not raw_code:
+        raise ValidationException("Código de vinculación requerido")
+
+    invitation_result = await session.execute(
+        select(LenderInvitation).where(LenderInvitation.code == raw_code).limit(1)
+    )
+    invitation = invitation_result.scalar_one_or_none()
+
+    lender_id: UUID | None = None
+    now = datetime.now(timezone.utc)
+
+    if invitation is not None:
+        if invitation.status != "active":
+            raise ValidationException("Este código de invitación ya no está activo")
+        if invitation.expires_at and invitation.expires_at < now:
+            invitation.status = "expired"
+            await session.commit()
+            raise ValidationException("Código de invitación expirado")
+        lender_id = invitation.lender_id
+    else:
+        try:
+            lender_id = UUID(decode_association_code(raw_code))
+        except (JWTError, ValueError):
+            raise ValidationException("Código inválido o expirado")
+
+    lender_result = await session.execute(
+        select(Lender).where(
+            Lender.id == lender_id,
+            Lender.status == LenderStatus.ACTIVE,
+        )
+    )
+    lender = lender_result.scalar_one_or_none()
+    if lender is None:
+        raise NotFoundException("Financiera no encontrada o no disponible")
+
+    link_result = await session.execute(
+        select(CustomerLenderLink).where(
+            CustomerLenderLink.customer_id == customer.id,
+            CustomerLenderLink.lender_id == lender.id,
+        )
+    )
+    link = link_result.scalar_one_or_none()
+    if link is None:
+        session.add(
+            CustomerLenderLink(
+                customer_id=customer.id,
+                lender_id=lender.id,
+                status=LinkStatus.LINKED,
+            )
+        )
+    else:
+        link.status = LinkStatus.LINKED
+
+    if customer.lender_id is None:
+        customer.lender_id = lender.id
+
+    if invitation is not None:
+        invitation.status = "used"
+        invitation.used_at = now
+        invitation.used_by_customer_id = customer.id
+
+    await session.commit()
+
+    return {
+        "message": "Vinculación completada",
+        "lender_id": str(lender.id),
+        "status": "linked",
     }
 
 

@@ -1,7 +1,9 @@
 """Lender dashboard API - dashboard stats, loans, customers, payments, users."""
 
+from datetime import UTC, datetime, timedelta
+import secrets
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, or_
@@ -10,6 +12,7 @@ from app.db.session import get_db
 from app.dependencies import get_lender_context, require_roles
 from app.models.user import User
 from app.models.customer import Customer
+from app.models.lender import LenderInvitation
 from app.models.loan import Loan, LoanStatus
 from app.models.payment import Payment, PaymentStatus
 from app.models.customer_lender_link import CustomerLenderLink
@@ -27,6 +30,7 @@ from app.schemas.dashboard import (
 from app.services.dashboard_service import DashboardService
 from app.services.payment_service import PaymentService
 from app.services.storage_service import storage_service
+from app.core.association_code import create_association_code
 
 
 router = APIRouter(prefix="/lender", tags=["lender"])
@@ -133,6 +137,211 @@ class ApprovePaymentRequest(BaseModel):
 
 class RejectPaymentRequest(BaseModel):
     reason: str
+
+
+class CreateInvitationRequest(BaseModel):
+    expires_in_days: int = 30
+
+
+@router.get("/invitations")
+async def list_lender_invitations(
+    status_filter: str = Query(default="all"),
+    search: str | None = Query(default=None),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    _current_user: User = Depends(
+        require_roles("platform_admin", "owner", "manager", "reviewer", "agent")
+    ),
+    lender_id: str = Depends(get_lender_context),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """List invitations for this lender with optional status/search filters."""
+    lender_uuid = UUID(lender_id)
+    normalized_status = (status_filter or "all").strip().lower()
+    valid_statuses = {"all", "active", "used", "revoked", "expired"}
+    if normalized_status not in valid_statuses:
+        normalized_status = "all"
+
+    base_query = (
+        select(LenderInvitation, Customer)
+        .outerjoin(Customer, Customer.id == LenderInvitation.used_by_customer_id)
+        .where(LenderInvitation.lender_id == lender_uuid)
+    )
+    count_query = select(func.count(LenderInvitation.id)).where(
+        LenderInvitation.lender_id == lender_uuid
+    )
+
+    if normalized_status != "all":
+        now = datetime.now(UTC)
+        if normalized_status == "expired":
+            expired_filter = or_(
+                LenderInvitation.expires_at < now,
+                LenderInvitation.status == "expired",
+            )
+            base_query = base_query.where(expired_filter)
+            count_query = count_query.where(expired_filter)
+        else:
+            base_query = base_query.where(LenderInvitation.status == normalized_status)
+            count_query = count_query.where(LenderInvitation.status == normalized_status)
+
+    if search and search.strip():
+        term = search.strip()
+        search_filter = or_(
+            LenderInvitation.code.ilike(f"%{term}%"),
+            Customer.email.ilike(f"%{term}%"),
+            Customer.first_name.ilike(f"%{term}%"),
+            Customer.last_name.ilike(f"%{term}%"),
+        )
+        base_query = base_query.where(search_filter)
+        count_query = count_query.where(search_filter)
+
+    total_result = await session.execute(count_query)
+    total = total_result.scalar() or 0
+
+    result = await session.execute(
+        base_query.order_by(desc(LenderInvitation.created_at)).offset(skip).limit(limit)
+    )
+    rows = result.all()
+
+    now = datetime.now(UTC)
+    items = []
+    for invitation, customer in rows:
+        effective_status = invitation.status
+        if invitation.status == "active" and invitation.expires_at < now:
+            effective_status = "expired"
+
+        used_by_name = None
+        if customer is not None:
+            used_by_name = f"{customer.first_name} {customer.last_name}".strip()
+
+        items.append(
+            {
+                "id": str(invitation.id),
+                "code": invitation.code,
+                "status": effective_status,
+                "expires_at": invitation.expires_at.isoformat()
+                if invitation.expires_at
+                else None,
+                "used_at": invitation.used_at.isoformat() if invitation.used_at else None,
+                "used_by_customer_id": str(invitation.used_by_customer_id)
+                if invitation.used_by_customer_id
+                else None,
+                "used_by_name": used_by_name,
+                "used_by_email": customer.email if customer is not None else None,
+                "created_at": invitation.created_at.isoformat()
+                if invitation.created_at
+                else None,
+            }
+        )
+
+    return {"items": items, "total": total, "skip": skip, "limit": limit}
+
+
+@router.post("/invitations")
+async def create_lender_invitation(
+    request: CreateInvitationRequest,
+    current_user: User = Depends(
+        require_roles("platform_admin", "owner", "manager", "reviewer", "agent")
+    ),
+    lender_id: str = Depends(get_lender_context),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Generate a new invitation code for customer linking."""
+    expires_in_days = max(1, min(request.expires_in_days, 30))
+    expires_at = datetime.now(UTC) + timedelta(days=expires_in_days)
+    invitation_code = secrets.token_urlsafe(18)[:24].upper()
+    while True:
+        code_exists_result = await session.execute(
+            select(LenderInvitation.id)
+            .where(LenderInvitation.code == invitation_code)
+            .limit(1)
+        )
+        if code_exists_result.scalar_one_or_none() is None:
+            break
+        invitation_code = secrets.token_urlsafe(18)[:24].upper()
+
+    invitation = LenderInvitation(
+        lender_id=UUID(lender_id),
+        code=invitation_code,
+        expires_at=expires_at,
+        created_by_user_id=current_user.id,
+        status="active",
+    )
+    session.add(invitation)
+    await session.commit()
+    await session.refresh(invitation)
+
+    return {
+        "id": str(invitation.id),
+        "code": invitation.code,
+        "status": invitation.status,
+        "expires_at": invitation.expires_at.isoformat(),
+        "created_at": invitation.created_at.isoformat() if invitation.created_at else None,
+        "message": "Invitacion creada",
+    }
+
+
+@router.post("/invitations/{invitation_id}/cancel")
+async def cancel_lender_invitation(
+    invitation_id: UUID,
+    _current_user: User = Depends(
+        require_roles("platform_admin", "owner", "manager", "reviewer", "agent")
+    ),
+    lender_id: str = Depends(get_lender_context),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Cancel an active invitation code."""
+    result = await session.execute(
+        select(LenderInvitation)
+        .where(
+            LenderInvitation.id == invitation_id,
+            LenderInvitation.lender_id == UUID(lender_id),
+        )
+        .limit(1)
+    )
+    invitation = result.scalar_one_or_none()
+    if invitation is None:
+        return {"success": False, "message": "Invitacion no encontrada"}
+
+    if invitation.status != "active":
+        return {
+            "success": False,
+            "message": "Solo puedes cancelar invitaciones activas",
+            "status": invitation.status,
+        }
+
+    invitation.status = "revoked"
+    await session.commit()
+    return {
+        "success": True,
+        "id": str(invitation.id),
+        "status": invitation.status,
+        "message": "Invitacion cancelada",
+    }
+
+
+@router.post("/association-code")
+async def generate_association_code(
+    expires_minutes: int = Query(default=30, ge=5, le=120),
+    _current_user: User = Depends(
+        require_roles("platform_admin", "owner", "manager", "reviewer", "agent")
+    ),
+    lender_id: str = Depends(get_lender_context),
+) -> dict:
+    """Generate a short-lived code to link a customer with this lender."""
+    try:
+        code = create_association_code(lender_id=lender_id, expires_minutes=expires_minutes)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No se pudo generar el código de vinculación",
+        ) from exc
+
+    return {
+        "code": code,
+        "expires_minutes": expires_minutes,
+        "message": "Código generado exitosamente",
+    }
 
 
 @router.post("/payments/{payment_id}/approve")
