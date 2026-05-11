@@ -90,11 +90,16 @@ class RegisterLenderRequest(BaseModel):
 
     @model_validator(mode="after")
     def ensure_required_docs(self):
-        if not self.rnc_number:
-            if (self.document_type or "").strip().lower() == "rnc" and self.document_number:
-                self.rnc_number = self.document_number
-        if not self.rnc_number:
-            raise ValueError("El RNC es obligatorio para registrar prestamistas")
+        lender_type = (self.lender_type or "").strip().lower()
+        if not self.rnc_number and (self.document_type or "").strip().lower() == "rnc" and self.document_number:
+            self.rnc_number = self.document_number
+        if lender_type == "financial" and not self.rnc_number:
+            raise ValueError("El RNC es obligatorio para registrar financieras")
+        if lender_type == "individual" and self.rnc_number:
+            # Se permite si lo aporta, pero no se exige.
+            pass
+        if lender_type not in {"financial", "individual"}:
+            raise ValueError("Tipo de prestamista inválido")
         if not self.owner_cedula:
             raise ValueError("La cédula del titular es obligatoria")
         return self
@@ -143,9 +148,22 @@ class SendOTPRequest(BaseModel):
     pass  # OTP is sent based on authenticated user
 
 
+class SendOTPPublicRequest(BaseModel):
+    """Public OTP resend request."""
+
+    email: EmailStr
+
+
 class VerifyOTPRequest(BaseModel):
     """Verify OTP request."""
 
+    otp_code: str = Field(..., min_length=6, max_length=6)
+
+
+class VerifyOTPPublicRequest(BaseModel):
+    """Public OTP verification request."""
+
+    email: EmailStr
     otp_code: str = Field(..., min_length=6, max_length=6)
 
 

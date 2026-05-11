@@ -60,7 +60,10 @@ class Customer(Base, BaseModel):
 
     # Relationships
     lender: Mapped["Lender"] = relationship(back_populates="customers")
-    user: Mapped[Optional["User"]] = relationship(back_populates="customer_profile")
+    user: Mapped[Optional["User"]] = relationship(
+        back_populates="customer_profile",
+        foreign_keys=[user_id],
+    )
     lender_links: Mapped[list["CustomerLenderLink"]] = relationship(
         back_populates="customer",
         cascade="all, delete-orphan",

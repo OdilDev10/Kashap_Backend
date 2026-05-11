@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.db.session import get_db
 from app.dependencies import get_current_user, get_lender_context
@@ -79,7 +80,13 @@ async def create_braintree_subscription(
             payment_method_nonce=request.payment_method_nonce,
             billing_period_start_date=request.billing_period_start_date,
         )
-        return result
+        return SubscriptionResponse(
+            success=result["success"],
+            subscription_id=result["subscription_id"],
+            plan_id=result["plan_id"],
+            status=result["status"],
+            balance=result["balance"],
+        )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -113,13 +120,34 @@ async def braintree_webhook(
     try:
         webhook_data = await handle_webhook(bt_signature, bt_payload)
 
-        # TODO: Update subscription status in database based on webhook event
+        subscription_id = webhook_data.get("subscription_id")
+        event = webhook_data.get("event")
+
+        if subscription_id and event:
+            from app.models.subscription import Subscription, SubscriptionStatus
+
+            result = await session.execute(
+                select(Subscription).where(
+                    Subscription.braintree_subscription_id == subscription_id
+                )
+            )
+            subscription = result.scalar_one_or_none()
+
+            if subscription:
+                if event == "subscription_charged_successfully":
+                    subscription.status = SubscriptionStatus.ACTIVE
+                elif event == "subscription_charged_unsuccessfully":
+                    subscription.status = SubscriptionStatus.PAST_DUE
+                elif event == "subscription_expired":
+                    subscription.status = SubscriptionStatus.CANCELLED
+
+                await session.commit()
 
         return MessageResponse(
             message=f"Webhook processed: {webhook_data.get('event', 'unknown')}"
         )
     except Exception as e:
-        # Log but return 200 to acknowledge webhook received
         import logging
+
         logging.error(f"Webhook error: {str(e)}")
         return MessageResponse(message="Webhook received")

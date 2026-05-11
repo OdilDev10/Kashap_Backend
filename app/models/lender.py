@@ -4,7 +4,16 @@ import uuid
 from decimal import Decimal
 from typing import Optional, TYPE_CHECKING
 from datetime import datetime, date
-from sqlalchemy import String, DateTime, Date, Enum, Boolean, ForeignKey, Numeric, Integer
+from sqlalchemy import (
+    String,
+    DateTime,
+    Date,
+    Enum,
+    Boolean,
+    ForeignKey,
+    Numeric,
+    Integer,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
@@ -43,13 +52,17 @@ class Lender(Base, BaseModel):
     subscription_plan: Mapped[Optional[str]] = mapped_column(String(50))
     rejection_reason: Mapped[Optional[str]] = mapped_column(String(500))
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    verified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     verified_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    verification_notes: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    verification_notes: Mapped[Optional[str]] = mapped_column(
+        String(500), nullable=True
+    )
     subscription_starts_at: Mapped[Optional[datetime]] = mapped_column(Date)
     subscription_ends_at: Mapped[Optional[datetime]] = mapped_column(Date)
 
@@ -57,7 +70,9 @@ class Lender(Base, BaseModel):
         back_populates="lender", cascade="all, delete-orphan"
     )
     users: Mapped[list["User"]] = relationship(
-        back_populates="lender", cascade="all, delete-orphan"
+        back_populates="lender",
+        cascade="all, delete-orphan",
+        foreign_keys="User.lender_id",
     )
     customers: Mapped[list["Customer"]] = relationship(
         back_populates="lender", cascade="all, delete-orphan"
@@ -115,7 +130,10 @@ class LenderInvitation(Base, BaseModel):
     invitee_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     invitee_phone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
 
-    lender: Mapped[Lender] = relationship(back_populates="invitations")
+    lender: Mapped[Lender] = relationship(
+        back_populates="invitations",
+        foreign_keys=[lender_id],
+    )
 
     def __repr__(self) -> str:
         return f"<LenderInvitation {self.code[:8]}...>"
@@ -139,7 +157,10 @@ class LenderBankAccount(Base, BaseModel):
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(50), default="active")
 
-    lender: Mapped[Lender] = relationship(back_populates="bank_accounts")
+    lender: Mapped[Lender] = relationship(
+        back_populates="bank_accounts",
+        foreign_keys=[lender_id],
+    )
 
     def __repr__(self) -> str:
         return f"<LenderBankAccount {self.account_number_masked}>"

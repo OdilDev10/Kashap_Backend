@@ -2,12 +2,15 @@
 
 from uuid import UUID
 
+from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import CustomerStatus
 from app.core.exceptions import ConflictException, ValidationException, NotFoundException
 from app.core.identity_validation import normalize_cedula, normalize_phone
 from app.models.customer import Customer
+from app.models.loan import Loan
+from app.models.payment import Payment
 from app.repositories.customer_repo import CustomerRepository
 
 
@@ -116,14 +119,20 @@ class CustomerService:
         return customer
 
     async def get_customer_loans(self, customer_id: UUID):
-        """Get all loans for a customer (requires Loan model)."""
-        # TODO: Implement when Loan model is ready
-        return []
+        """Get all loans for a customer."""
+        result = await self.session.execute(
+            select(Loan).where(Loan.customer_id == customer_id).order_by(desc(Loan.created_at))
+        )
+        return result.scalars().all()
 
     async def get_customer_payments(self, customer_id: UUID):
-        """Get all payments for a customer (requires Payment model)."""
-        # TODO: Implement when Payment model is ready
-        return []
+        """Get all payments for a customer."""
+        result = await self.session.execute(
+            select(Payment)
+            .where(Payment.customer_id == customer_id)
+            .order_by(desc(Payment.created_at))
+        )
+        return result.scalars().all()
 
     async def activate_customer(self, customer_id: UUID) -> Customer:
         """Activate a customer."""

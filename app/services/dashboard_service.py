@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, and_, desc
 
 from app.models.loan import Loan, LoanStatus, Installment, InstallmentStatus
-from app.models.payment import Payment, PaymentStatus, Voucher
+from app.models.payment import Payment, PaymentStatus, Voucher, OcrResult
 from app.models.customer import Customer
 from app.models.user import User
 from app.core.enums import UserRole
@@ -484,7 +484,9 @@ class DashboardService:
                     "document_type": customer.document_type,
                     "document_number": customer.document_number,
                     "active_loans_count": active_loans,
-                    "status": "current",  # TODO: calculate actual status
+                    "status": customer.status.value
+                    if hasattr(customer.status, "value")
+                    else str(customer.status),
                     "created_at": customer.created_at,
                 }
             )
@@ -610,9 +612,10 @@ class DashboardService:
     ) -> tuple[list[dict], int]:
         """List pending vouchers for review."""
         query = (
-            select(Payment, Customer, Voucher)
+            select(Payment, Customer, Voucher, OcrResult)
             .join(Customer, Payment.customer_id == Customer.id)
             .join(Voucher, Voucher.payment_id == Payment.id)
+            .outerjoin(OcrResult, OcrResult.voucher_id == Voucher.id)
             .where(
                 Payment.lender_id == lender_id,
                 Payment.status == PaymentStatus.UNDER_REVIEW,
@@ -641,16 +644,32 @@ class DashboardService:
         rows = result.all()
 
         items = []
-        for payment, customer, voucher in rows:
+        for payment, customer, voucher, ocr_result in rows:
+            loan_number = ""
+            installment_number = None
+            if payment.loan_id:
+                loan_result = await self.session.execute(
+                    select(Loan.loan_number).where(Loan.id == payment.loan_id)
+                )
+                loan_number = loan_result.scalar_one_or_none() or ""
+            if payment.installment_id:
+                installment_result = await self.session.execute(
+                    select(Installment.installment_number).where(
+                        Installment.id == payment.installment_id
+                    )
+                )
+                installment_number = installment_result.scalar_one_or_none()
             items.append(
                 {
                     "id": str(payment.id),
                     "client_name": f"{customer.first_name} {customer.last_name}",
                     "loan_id": str(payment.loan_id) if payment.loan_id else "",
-                    "loan_number": "",  # TODO: get loan_number
-                    "installment_number": 1,  # TODO: get installment number
+                    "loan_number": loan_number,
+                    "installment_number": installment_number or 0,
                     "amount": float(payment.amount),
-                    "ocr_confidence": 0.94,  # TODO: get from OCR result
+                    "ocr_confidence": (
+                        float(ocr_result.confidence_score) if ocr_result else 0.0
+                    ),
                     "voucher_image_url": voucher.original_file_url,
                     "submitted_at": payment.created_at,
                 }

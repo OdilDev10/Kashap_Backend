@@ -169,38 +169,74 @@ async def get_subscription(
 @router.post("/subscription")
 async def create_or_update_subscription(
     plan_id: str,
+    payment_method_nonce: str,
     current_user: User = Depends(require_roles("owner")),
     lender_id: str = Depends(get_lender_context),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Create or update subscription (mock implementation)."""
+    """Create or update subscription with Braintree payment."""
+    if not payment_method_nonce:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Payment method nonce is required",
+        )
+
+    from app.services.braintree_service import (
+        create_subscription as braintree_create_subscription,
+    )
+
     result = await session.execute(
         select(Subscription).where(Subscription.lender_id == lender_id)
     )
-    subscription = result.scalar_one_or_none()
+    existing_subscription = result.scalar_one_or_none()
 
-    if subscription:
-        subscription.plan_id = plan_id
-        subscription.status = SubscriptionStatus.ACTIVE
-        subscription.current_period_start = datetime.utcnow()
-        subscription.current_period_end = datetime.utcnow() + timedelta(days=30)
-        subscription.cancel_at_period_end = False
+    if existing_subscription and existing_subscription.braintree_subscription_id:
+        from app.services.braintree_service import (
+            cancel_subscription as braintree_cancel,
+        )
+
+        try:
+            await braintree_cancel(existing_subscription.braintree_subscription_id)
+        except Exception:
+            pass
+
+    braintree_result = await braintree_create_subscription(
+        customer_id=lender_id,
+        plan_id=plan_id,
+        payment_method_nonce=payment_method_nonce,
+    )
+
+    if existing_subscription:
+        existing_subscription.plan_id = plan_id
+        existing_subscription.status = SubscriptionStatus.ACTIVE
+        existing_subscription.current_period_start = datetime.utcnow()
+        existing_subscription.current_period_end = datetime.utcnow() + timedelta(
+            days=30
+        )
+        existing_subscription.cancel_at_period_end = False
+        existing_subscription.braintree_subscription_id = braintree_result[
+            "subscription_id"
+        ]
+        subscription = existing_subscription
     else:
         subscription = Subscription(
             lender_id=lender_id,
             plan_id=plan_id,
-            status=SubscriptionStatus.TRIAL,
+            status=SubscriptionStatus.ACTIVE,
             current_period_start=datetime.utcnow(),
             current_period_end=datetime.utcnow() + timedelta(days=30),
             cancel_at_period_end=False,
+            braintree_subscription_id=braintree_result["subscription_id"],
         )
         session.add(subscription)
 
     await session.commit()
+    await session.refresh(subscription)
 
     return {
         "success": True,
         "subscription_id": str(subscription.id),
+        "braintree_subscription_id": braintree_result["subscription_id"],
         "plan_id": plan_id,
         "status": "active",
     }
@@ -270,7 +306,9 @@ async def delete_lender_account(
     lender.status = LenderStatus.SUSPENDED
     lender.updated_at = now
 
-    lender_users_result = await session.execute(select(User).where(User.lender_id == lender.id))
+    lender_users_result = await session.execute(
+        select(User).where(User.lender_id == lender.id)
+    )
     lender_users = lender_users_result.scalars().all()
     for lender_user in lender_users:
         lender_user.status = UserStatus.INACTIVE

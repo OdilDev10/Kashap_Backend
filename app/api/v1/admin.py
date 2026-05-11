@@ -291,7 +291,7 @@ async def get_admin_lender_kpis(
 @router.post("/{lender_id}/approve", status_code=status.HTTP_200_OK)
 async def approve_lender(
     lender_id: str,
-    _: User = Depends(require_roles("platform_admin")),
+    current_admin: User = Depends(require_roles("platform_admin")),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """Approve a lender (change status to active)."""
@@ -303,6 +303,11 @@ async def approve_lender(
         raise NotFoundException("Lender not found")
 
     lender.status = LenderStatus.ACTIVE
+    lender.is_verified = True
+    lender.verified_at = datetime.now(timezone.utc)
+    lender.verified_by = current_admin.id
+    lender.verification_notes = "Verificado por administración."
+    lender.rejection_reason = None
     await session.commit()
     return {"message": "Lender approved successfully"}
 
@@ -349,6 +354,16 @@ class RejectLenderRequest(BaseModel):
     reason: str = Field(..., description="Reason for rejection")
 
 
+class LenderVerificationRequest(BaseModel):
+    verified: bool
+    notes: str | None = Field(default=None, max_length=500)
+
+
+class LenderDocumentReviewRequest(BaseModel):
+    status: str = Field(..., pattern="^(validated|rejected)$")
+    notes: str | None = Field(default=None, max_length=500)
+
+
 @router.get("/pending-applications", response_model=dict)
 async def list_pending_applications(
     _: User = Depends(require_roles("platform_admin")),
@@ -376,6 +391,7 @@ async def list_pending_applications(
                 "status": lender.status.value
                 if hasattr(lender.status, "value")
                 else str(lender.status),
+                "is_verified": bool(getattr(lender, "is_verified", False)),
                 "rejection_reason": None,
                 "submitted_at": lender.created_at.isoformat()
                 if lender.created_at
@@ -389,7 +405,7 @@ async def list_pending_applications(
 async def reject_lender(
     lender_id: str,
     request: RejectLenderRequest,
-    _: User = Depends(require_roles("platform_admin")),
+    current_admin: User = Depends(require_roles("platform_admin")),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """Reject a lender application with a reason."""
@@ -402,8 +418,95 @@ async def reject_lender(
 
     lender.status = LenderStatus.REJECTED
     lender.rejection_reason = request.reason
+    lender.is_verified = False
+    lender.verified_at = datetime.now(timezone.utc)
+    lender.verified_by = current_admin.id
+    lender.verification_notes = request.reason
     await session.commit()
     return {"message": f"Lender rejected: {request.reason}"}
+
+
+@router.patch("/{lender_id}/verification", status_code=status.HTTP_200_OK)
+async def set_lender_verification(
+    lender_id: str,
+    payload: LenderVerificationRequest,
+    current_admin: User = Depends(require_roles("platform_admin")),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Set lender verification result from admin review."""
+    result = await session.execute(select(Lender).where(Lender.id == lender_id))
+    lender = result.scalar_one_or_none()
+    if not lender:
+        from app.core.exceptions import NotFoundException
+
+        raise NotFoundException("Lender not found")
+
+    now = datetime.now(timezone.utc)
+    lender.is_verified = payload.verified
+    lender.verified_at = now
+    lender.verified_by = current_admin.id
+    lender.verification_notes = payload.notes
+    if payload.verified:
+        lender.status = LenderStatus.ACTIVE
+        lender.rejection_reason = None
+    else:
+        lender.status = LenderStatus.REJECTED
+        lender.rejection_reason = payload.notes or "No cumple validación documental."
+    await session.commit()
+
+    return {
+        "success": True,
+        "message": "Verificación de prestamista actualizada",
+        "lender_id": str(lender.id),
+        "is_verified": lender.is_verified,
+    }
+
+
+@router.patch("/{lender_id}/documents/{document_id}/review", status_code=status.HTTP_200_OK)
+async def review_lender_document(
+    lender_id: str,
+    document_id: str,
+    payload: LenderDocumentReviewRequest,
+    current_admin: User = Depends(require_roles("platform_admin")),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Review lender legal document and store validated/rejected result."""
+    lender_result = await session.execute(select(Lender).where(Lender.id == lender_id))
+    lender = lender_result.scalar_one_or_none()
+    if not lender:
+        from app.core.exceptions import NotFoundException
+
+        raise NotFoundException("Lender not found")
+
+    doc_result = await session.execute(
+        select(LenderDocument).where(
+            LenderDocument.id == document_id,
+            LenderDocument.lender_id == lender.id,
+        )
+    )
+    document = doc_result.scalar_one_or_none()
+    if not document:
+        from app.core.exceptions import NotFoundException
+
+        raise NotFoundException("Document not found")
+
+    document.status = payload.status
+    document.notes = payload.notes
+    document.verified_by = current_admin.id
+    document.verified_at = datetime.now(timezone.utc)
+    await session.commit()
+    await session.refresh(document)
+
+    return {
+        "success": True,
+        "message": "Documento revisado",
+        "document": {
+            "id": str(document.id),
+            "status": document.status,
+            "notes": document.notes,
+            "verified_at": document.verified_at.isoformat() if document.verified_at else None,
+        },
+    }
 
 
 # Admin Users endpoints

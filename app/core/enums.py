@@ -169,6 +169,7 @@ class VoucherStatus(str, Enum):
 class OcrStatus(str, Enum):
     """Estado del resultado OCR."""
 
+    PENDING = "pending"
     SUCCESS = "success"
     PARTIAL = "partial"
     FAILED = "failed"

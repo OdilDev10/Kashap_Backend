@@ -1,6 +1,7 @@
 """Email service for sending emails via Resend."""
 
 import logging
+from email.utils import parseaddr
 from app.config import settings
 from app.services.email_templates import (
     get_verification_email_html,
@@ -23,6 +24,27 @@ class EmailService:
         self.app_name = "OptiCredit"
         self.app_url = settings.app_url
 
+    @staticmethod
+    def _normalize_from_email(from_email: str) -> str:
+        """Return a valid email address for the Resend `from` header."""
+        _, address = parseaddr(from_email)
+        return address or from_email.strip()
+
+    @staticmethod
+    def _is_production() -> bool:
+        return settings.environment == "production"
+
+    def _handle_missing_provider(self, log_hint: str) -> bool:
+        """
+        In development we allow log-only behavior.
+        In production this is treated as a real failure.
+        """
+        if self._is_production():
+            logger.error("[EMAIL] Provider not configured: %s", log_hint)
+            return False
+        logger.info("[EMAIL DEV] %s", log_hint)
+        return True
+
     async def _send_via_resend(
         self, to_email: str, subject: str, html_content: str
     ) -> bool:
@@ -33,7 +55,7 @@ class EmailService:
             resend.api_key = self.api_key
 
             params = {
-                "from": f"{self.from_name} <{self.from_email}>",
+                "from": f"{self.from_name} <{self._normalize_from_email(self.from_email)}>",
                 "to": to_email,
                 "subject": subject,
                 "html": html_content,
@@ -61,11 +83,10 @@ class EmailService:
 
         subject = "Verifica tu correo electrónico - OptiCredit"
 
-        if settings.environment == "development":
-            logger.info(f"[EMAIL DEV] To: {to_email}")
-            logger.info(f"[EMAIL DEV] Subject: {subject}")
-            logger.info(f"[EMAIL DEV] Link: {verification_link}")
-            return True
+        if not self.api_key:
+            return self._handle_missing_provider(
+                f"To: {to_email} | Subject: {subject} | Link: {verification_link}"
+            )
 
         return await self._send_via_resend(to_email, subject, html_content)
 
@@ -81,11 +102,10 @@ class EmailService:
 
         subject = "Restablecer Contraseña - OptiCredit"
 
-        if settings.environment == "development":
-            logger.info(f"[EMAIL DEV] To: {to_email}")
-            logger.info(f"[EMAIL DEV] Subject: {subject}")
-            logger.info(f"[EMAIL DEV] Link: {reset_link}")
-            return True
+        if not self.api_key:
+            return self._handle_missing_provider(
+                f"To: {to_email} | Subject: {subject} | Link: {reset_link}"
+            )
 
         return await self._send_via_resend(to_email, subject, html_content)
 
@@ -99,11 +119,10 @@ class EmailService:
 
         subject = "Tu código de verificación - OptiCredit"
 
-        if settings.environment == "development":
-            logger.info(f"[EMAIL DEV] To: {to_email}")
-            logger.info(f"[EMAIL DEV] Subject: {subject}")
-            logger.info(f"[EMAIL DEV] OTP: {otp_code}")
-            return True
+        if not self.api_key:
+            return self._handle_missing_provider(
+                f"To: {to_email} | Subject: {subject} | OTP: {otp_code}"
+            )
 
         return await self._send_via_resend(to_email, subject, html_content)
 
@@ -117,10 +136,10 @@ class EmailService:
 
         subject = "Bienvenido/a a OptiCredit"
 
-        if settings.environment == "development":
-            logger.info(f"[EMAIL DEV] To: {to_email}")
-            logger.info(f"[EMAIL DEV] Subject: {subject}")
-            return True
+        if not self.api_key:
+            return self._handle_missing_provider(
+                f"To: {to_email} | Subject: {subject}"
+            )
 
         return await self._send_via_resend(to_email, subject, html_content)
 
@@ -131,11 +150,10 @@ class EmailService:
         if not is_html:
             body = f"<html><body><pre style='font-family: monospace;'>{body}</pre></body></html>"
 
-        if settings.environment == "development":
-            logger.info(f"[EMAIL DEV] To: {to_email}")
-            logger.info(f"[EMAIL DEV] Subject: {subject}")
-            logger.info(f"[EMAIL DEV] Body: {body[:200]}...")
-            return True
+        if not self.api_key:
+            return self._handle_missing_provider(
+                f"To: {to_email} | Subject: {subject} | Body: {body[:200]}..."
+            )
 
         return await self._send_via_resend(to_email, subject, body)
 
@@ -157,10 +175,10 @@ class EmailService:
         </html>
         """
 
-        if settings.environment == "development":
-            logger.info(f"[EMAIL DEV] Support request from {email}")
-            logger.info(f"[EMAIL DEV] Subject: {subject}")
-            return True
+        if settings.environment == "development" and not self.api_key:
+            return self._handle_missing_provider(
+                f"Support request from {email} | Subject: {subject}"
+            )
 
         return await self._send_via_resend(
             self.support_email, f"Support: {subject}", html_content

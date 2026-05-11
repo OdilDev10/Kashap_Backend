@@ -17,7 +17,9 @@ from app.schemas.auth import (
     ResetPasswordRequest,
     ChangePasswordRequest,
     SendOTPRequest,
+    SendOTPPublicRequest,
     VerifyOTPRequest,
+    VerifyOTPPublicRequest,
     AuthResponse,
     UserResponse,
     RegisterCustomerRequest,
@@ -104,6 +106,28 @@ async def register_lender(
         phone=request.phone,
     )
     return RegistrationEntityResponse(**result)
+
+
+@router.post("/send-otp/public", response_model=MessageResponse)
+async def send_otp_public(
+    request: SendOTPPublicRequest,
+    session: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Send OTP to a user by email without authentication."""
+    service = AuthService(session)
+    result = await service.send_otp_by_email(request.email)
+    return MessageResponse(message=result.get("message", "OTP sent"))
+
+
+@router.post("/verify-otp/public", response_model=MessageResponse)
+async def verify_otp_public(
+    request: VerifyOTPPublicRequest,
+    session: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Verify OTP by email without authentication."""
+    service = AuthService(session)
+    result = await service.verify_otp_by_email(request.email, request.otp_code)
+    return MessageResponse(message=result.get("message", "OTP verified"))
 
 
 @router.post("/verify-email", response_model=MessageResponse)

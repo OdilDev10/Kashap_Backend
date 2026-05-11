@@ -162,34 +162,33 @@ async def get_audit_logs(
 
 
 @router.get("/audit-log")
-async def get_audit_log(
+async def get_audit_log_summary(
+    limit: int = Query(default=10, ge=1, le=50),
     _: User = Depends(require_roles("platform_admin")),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Get recent audit log entries (mock)."""
+    """Get recent audit log entries for the platform."""
+    repo = AuditLogRepository(session)
+
+    items, total = await repo.list_for_platform(
+        skip=0,
+        limit=limit,
+    )
 
     return {
         "entries": [
             {
-                "id": "1",
-                "action": "lender_approved",
-                "user": "admin@opticredit.com",
-                "target": "Financiera ABC",
-                "timestamp": datetime.utcnow().isoformat(),
-            },
-            {
-                "id": "2",
-                "action": "plan_updated",
-                "user": "admin@opticredit.com",
-                "target": "Plan Profesional",
-                "timestamp": datetime.utcnow().isoformat(),
-            },
-            {
-                "id": "3",
-                "action": "lender_suspended",
-                "user": "admin@opticredit.com",
-                "target": "Prestamista XYZ",
-                "timestamp": datetime.utcnow().isoformat(),
-            },
+                "id": str(log.id),
+                "user_email": log.user_email,
+                "user_name": log.user_name,
+                "action": log.action,
+                "resource_type": log.resource_type,
+                "resource_id": log.resource_id,
+                "description": log.description,
+                "ip_address": log.ip_address,
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+            }
+            for log in items
         ],
-        "total": 3,
+        "total": total,
     }

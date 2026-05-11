@@ -62,8 +62,14 @@ class User(Base, BaseModel):
         DateTime(timezone=True), nullable=True
     )
 
-    lender: Mapped["Lender"] = relationship(back_populates="users")
-    customer_profile: Mapped["Customer"] = relationship(back_populates="user")
+    lender: Mapped["Lender"] = relationship(
+        back_populates="users",
+        foreign_keys=[lender_id],
+    )
+    customer_profile: Mapped["Customer"] = relationship(
+        back_populates="user",
+        foreign_keys="Customer.user_id",
+    )
 
     def __repr__(self) -> str:
         return f"<User {self.email}>"

@@ -2,6 +2,7 @@ import os
 import json
 from typing import Literal
 from urllib.parse import urlparse
+from pathlib import Path
 
 from pydantic import field_validator
 from pydantic import model_validator
@@ -195,15 +196,19 @@ class Settings(BaseSettings):
 # Global settings instance
 def _resolve_env_files() -> tuple[str, ...]:
     """Pick env files based on runtime environment and optional override."""
+    base_dir = Path(__file__).resolve().parent.parent
     explicit_env_file = os.getenv("ENV_FILE")
     if explicit_env_file:
-        return (explicit_env_file,)
+        env_path = Path(explicit_env_file)
+        if not env_path.is_absolute():
+            env_path = base_dir / env_path
+        return (str(env_path),)
 
     environment = os.getenv("ENVIRONMENT", "development").lower()
     if environment == "production":
-        return (".env.production", ".env")
+        return (str(base_dir / ".env.production"),)
 
-    return (".env.local", ".env")
+    return (str(base_dir / ".env.local"),)
 
 
 settings = Settings(_env_file=_resolve_env_files())

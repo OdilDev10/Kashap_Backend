@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.db.session import get_db
 from app.dependencies import get_current_user, require_roles
 from app.models.user import User
+from app.models.lender import Lender
 from app.models.subscription import Subscription, SubscriptionStatus
 from app.core.exceptions import AppException
 
@@ -52,29 +53,57 @@ async def get_current_subscription(
 @router.post("/create")
 async def create_subscription(
     plan_id: str,
-    payment_method_nonce: str = "fake_nonce",
+    payment_method_nonce: str,
     current_user: User = Depends(require_roles("owner")),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Create new subscription (mock implementation)."""
+    """Create new subscription with Braintree."""
+    if not payment_method_nonce or payment_method_nonce == "fake_nonce":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid payment method nonce",
+        )
+
+    from app.services.braintree_service import (
+        create_subscription as braintree_create_subscription,
+    )
+    from app.models.lender import Lender
+
+    lender_result = await session.execute(
+        select(Lender).where(Lender.id == current_user.lender_id)
+    )
+    lender = lender_result.scalar_one_or_none()
+    if not lender:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lender not found",
+        )
+
+    braintree_result = await braintree_create_subscription(
+        customer_id=str(current_user.lender_id),
+        plan_id=plan_id,
+        payment_method_nonce=payment_method_nonce,
+    )
+
     subscription = Subscription(
-        id=UUID("00000000-0000-0000-0000-000000000001"),
         lender_id=current_user.lender_id,
         plan_id=plan_id,
-        status=SubscriptionStatus.TRIAL,
+        status=SubscriptionStatus.ACTIVE,
         current_period_start=datetime.utcnow(),
         current_period_end=datetime.utcnow(),
         cancel_at_period_end=False,
+        braintree_subscription_id=braintree_result["subscription_id"],
     )
     session.add(subscription)
     await session.commit()
+    await session.refresh(subscription)
 
     return {
         "success": True,
         "subscription_id": str(subscription.id),
+        "braintree_subscription_id": braintree_result["subscription_id"],
         "plan_id": plan_id,
-        "status": "trial",
-        "message": "Subscription created (demo mode)",
+        "status": "active",
     }
 
 

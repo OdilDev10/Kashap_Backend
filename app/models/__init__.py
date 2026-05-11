@@ -14,6 +14,7 @@ from app.models.notification import Notification
 from app.models.customer_document import CustomerDocument
 from app.models.client_bank_account import ClientBankAccount
 from app.models.support_request import SupportRequest
+from app.models.cedula_ocr_result import CedulaOcrResult
 from app.models.audit_log import AuditLog  # noqa: E402,F401
 
 __all__ = [
@@ -41,4 +42,5 @@ __all__ = [
     "CustomerDocument",
     "ClientBankAccount",
     "SupportRequest",
+    "CedulaOcrResult",
 ]

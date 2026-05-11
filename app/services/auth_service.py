@@ -70,6 +70,41 @@ class AuthService:
             "phone": user.phone,
         }
 
+    async def _send_registration_otp(self, user, recipient_name: str) -> None:
+        """Generate and email an OTP for a newly registered user."""
+        otp_code = "".join(random.choices(string.digits, k=6))
+        expires_at = datetime.utcnow() + timedelta(minutes=10)
+
+        await self.otp_repo.create(
+            {
+                "user_id": user.id,
+                "code": otp_code,
+                "expires_at": expires_at,
+                "attempts": 0,
+            }
+        )
+
+        await email_service.send_otp_email(
+            to_email=user.email,
+            otp_code=otp_code,
+            recipient_name=recipient_name,
+        )
+
+    async def _activate_user_and_lender(self, user) -> None:
+        """Activate the user and associated lender when OTP is verified."""
+        await self.user_repo.update(user, {"status": "active"})
+
+        if user.lender_id:
+            lender = await self.lender_repo.get_or_404(user.lender_id)
+            await self.lender_repo.update(
+                lender,
+                {
+                    "status": "active",
+                    "is_verified": True,
+                    "verified_at": datetime.utcnow(),
+                },
+            )
+
     async def register(
         self,
         email: str,
@@ -126,28 +161,16 @@ class AuthService:
             status="inactive",  # User is inactive until email is verified
         )
 
-        # Generate email verification token
-        token = str(uuid4())
-        expires_at = datetime.utcnow() + timedelta(hours=24)
-
-        await self.email_verification_repo.create(
-            {
-                "user_id": user.id,
-                "token": token,
-                "expires_at": expires_at,
-            }
-        )
-
-        # Send verification email
-        await email_service.send_verification_email(
-            to_email=email, token=token, recipient_name=f"{first_name} {last_name}"
+        await self._send_registration_otp(
+            user=user,
+            recipient_name=f"{first_name} {last_name}",
         )
 
         return {
             "user_id": str(user.id),
             "email": user.email,
-            "status": "pending_verification",
-            "message": "Verification email sent. Check your inbox.",
+            "status": "pending_otp_verification",
+            "message": "OTP sent to your email. Check your inbox.",
         }
 
     async def verify_email(self, token: str) -> dict:
@@ -412,27 +435,26 @@ class AuthService:
 
     async def send_otp(self, user_id: str) -> dict:
         """Generate and send OTP to user."""
-        # Generate OTP code
-        otp_code = "".join(random.choices(string.digits, k=6))
-        expires_at = datetime.utcnow() + timedelta(minutes=10)
-
-        # Get user
         user = await self.user_repo.get_or_404(user_id)
-
-        # Create OTP record
-        await self.otp_repo.create(
-            {
-                "user_id": user_id,
-                "code": otp_code,
-                "expires_at": expires_at,
-                "attempts": 0,
-            }
+        await self._send_registration_otp(
+            user=user,
+            recipient_name=f"{user.first_name} {user.last_name}",
         )
 
-        # Send OTP email
-        await email_service.send_otp_email(
-            to_email=user.email,
-            otp_code=otp_code,
+        await self.session.commit()
+
+        return {
+            "message": "OTP sent to your email",
+        }
+
+    async def send_otp_by_email(self, email: str) -> dict:
+        """Generate and send OTP to a user identified by email."""
+        user = await self.user_repo.get_by_email(email.lower().strip())
+        if not user:
+            raise NotFoundException("User not found", code="USER_NOT_FOUND")
+
+        await self._send_registration_otp(
+            user=user,
             recipient_name=f"{user.first_name} {user.last_name}",
         )
 
@@ -468,9 +490,45 @@ class AuthService:
             await self.session.commit()
             raise ValidationException("Incorrect OTP code", code="INVALID_OTP")
 
-        # Mark as verified
+        # Mark as verified and activate the account
         await self.otp_repo.update(otp, {"verified_at": datetime.utcnow()})
+        user = await self.user_repo.get_or_404(user_id)
+        await self._activate_user_and_lender(user)
 
+        await self.session.commit()
+
+        return {
+            "message": "OTP verified successfully",
+        }
+
+    async def verify_otp_by_email(self, email: str, otp_code: str) -> dict:
+        """Verify OTP using the user's email address."""
+        user = await self.user_repo.get_by_email(email.lower().strip())
+        if not user:
+            raise NotFoundException("User not found", code="USER_NOT_FOUND")
+
+        otp = await self.otp_repo.get_latest_by_user(user.id)
+        if not otp:
+            raise NotFoundException("No OTP found", code="NO_OTP")
+
+        if otp.expires_at < datetime.utcnow():
+            raise ValidationException("OTP has expired", code="OTP_EXPIRED")
+
+        if otp.verified_at:
+            raise ValidationException(
+                "OTP already verified", code="OTP_ALREADY_VERIFIED"
+            )
+
+        if otp.code != otp_code.strip():
+            otp.attempts += 1
+            if otp.attempts >= 3:
+                raise ValidationException("Too many attempts", code="TOO_MANY_ATTEMPTS")
+            await self.otp_repo.update(otp, {"attempts": otp.attempts})
+            await self.session.commit()
+            raise ValidationException("Incorrect OTP code", code="INVALID_OTP")
+
+        await self.otp_repo.update(otp, {"verified_at": datetime.utcnow()})
+        await self._activate_user_and_lender(user)
         await self.session.commit()
 
         return {
@@ -607,14 +665,15 @@ class AuthService:
         legal_name: str,
         commercial_name: str,
         lender_type: str,
-        rnc_number: str,
+        rnc_number: str | None,
         owner_cedula: str,
         phone: str,
     ) -> dict:
         """Register new lender (prestamista/financiera)."""
         email = email.lower().strip()
         phone = normalize_phone(phone)
-        rnc_number = normalize_rnc(rnc_number)
+        lender_type = lender_type.strip().lower()
+        normalized_rnc_number = normalize_rnc(rnc_number) if rnc_number else None
         owner_cedula = normalize_cedula(owner_cedula)
 
         # Validate inputs
@@ -626,6 +685,8 @@ class AuthService:
 
         if lender_type not in ["financial", "individual"]:
             raise ValidationException("Lender type must be 'financial' or 'individual'")
+        if lender_type == "financial" and not normalized_rnc_number:
+            raise ValidationException("RNC is required for financial lenders")
 
         # Check if lender already exists
         if await self.user_repo.email_exists(email) or await self.customer_repo.email_exists(
@@ -642,9 +703,9 @@ class AuthService:
                 code="EMAIL_ALREADY_EXISTS",
             )
 
-        if await self.lender_repo.get_by_document_number(rnc_number):
+        if normalized_rnc_number and await self.lender_repo.get_by_document_number(normalized_rnc_number):
             raise ConflictException(
-                f"Lender with RNC {rnc_number} already exists",
+                f"Lender with document {normalized_rnc_number} already exists",
                 code="DOCUMENT_EXISTS",
             )
         if await self.lender_repo.owner_cedula_exists(owner_cedula):
@@ -659,13 +720,15 @@ class AuthService:
             )
 
         # Create lender
+        document_type = "RNC" if normalized_rnc_number else "Cedula"
+        document_number = normalized_rnc_number or owner_cedula
         lender = await self.lender_repo.create(
             {
                 "legal_name": legal_name,
                 "commercial_name": commercial_name.strip() or legal_name,
                 "lender_type": lender_type,
-                "document_type": "RNC",
-                "document_number": rnc_number,
+                "document_type": document_type,
+                "document_number": document_number,
                 "owner_cedula": owner_cedula,
                 "email": email,
                 "phone": phone,
@@ -686,21 +749,8 @@ class AuthService:
             lender_id=lender.id,
         )
 
-        # Send verification email to lender
-        token = str(uuid4())
-        expires_at = datetime.utcnow() + timedelta(hours=24)
-
-        await self.email_verification_repo.create(
-            {
-                "user_id": owner_user.id,
-                "token": token,
-                "expires_at": expires_at,
-            }
-        )
-
-        await email_service.send_verification_email(
-            to_email=email,
-            token=token,
+        await self._send_registration_otp(
+            user=owner_user,
             recipient_name=f"{owner_user.first_name} {owner_user.last_name}",
         )
 
@@ -710,6 +760,6 @@ class AuthService:
             "lender_id": str(lender.id),
             "user_id": str(owner_user.id),
             "email": email,
-            "status": "pending_verification",
-            "message": "Verification email sent. Check your inbox to activate your lender account.",
+            "status": "pending_otp_verification",
+            "message": "OTP sent to your email. Check your inbox to activate your lender account.",
         }
